@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .input {
+    @apply w-full bg-surface-1 border border-surface-3 rounded px-3 py-1.5 text-sm text-text placeholder-text-dim focus:outline-none focus:border-accent transition-colors;
+  }
+
+  .btn-primary {
+    @apply bg-accent text-surface-1 font-semibold rounded px-4 py-1.5 text-sm hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply text-text-muted hover:text-text border border-surface-3 rounded px-3 py-1.5 text-sm transition-colors cursor-pointer;
+  }
+
+  /* Drags the window. Only meaningful on macOS, where the titlebar is hidden and the
+     traffic lights float over the renderer — see the strip at the top of the sidebar. */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+
+/* Monaco editor overrides */
+.monaco-editor .margin {
+  background-color: #18181b !important;
+}
+
+.monaco-editor, .monaco-editor-background {
+  background-color: #18181b !important;
+}
+
+/* Tree item hover */
+.tree-item:hover {
+  background-color: rgba(201, 162, 39, 0.08);
+}
+
+.tree-item.selected {
+  background-color: rgba(201, 162, 39, 0.15);
+}
+
+/* Tab active */
+.tab-active {
+  border-bottom: 2px solid #c9a227;
+}
+
+/* Results table */
+.results-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #09090b;
+  border-bottom: 1px solid #27272a;
+}
+
+/* Column widths come from the table's colgroup (table-layout: fixed), so these three only
+   decide what happens to content that doesn't fit: one line, clipped, ending in an ellipsis. */
+.results-table td, .results-table th {
+  border-right: 1px solid #27272a;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.results-table tr:hover td {
+  background: rgba(201, 162, 39, 0.05);
+}

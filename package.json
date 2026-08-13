@@ -1,0 +1,46 @@
+{
+  "name": "downpick",
+  "productName": "Downpick",
+  "version": "1.0.0",
+  "description": "Standalone desktop database manager for PostgreSQL, SQL Server, and MongoDB",
+  "author": "Downpick",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/igorklafke/downpick.git"
+  },
+  "main": ".electron-out/electron/main.js",
+  "scripts": {
+    "postinstall": "node scripts/dev-branding.js",
+    "dev": "concurrently -k -n vite,tsc,app -c cyan,yellow,green \"npm:dev:client\" \"npm:dev:main\" \"npm:dev:app\"",
+    "dev:client": "cd client && npx vite --port 5173",
+    "dev:main": "tsc -p electron/tsconfig.json --watch --preserveWatchOutput",
+    "dev:app": "wait-on -d 500 http-get://localhost:5173 .electron-out/electron/main.js && electron . --dev-server=http://localhost:5173",
+    "build": "npm run build:client && npm run build:main",
+    "build:client": "cd client && npm run build",
+    "clean": "node -e \"require('fs').rmSync('.electron-out',{recursive:true,force:true})\"",
+    "build:main": "npm run clean && tsc -p electron/tsconfig.json",
+    "test": "npm run build:main && node --test \".electron-out/server/**/*.test.js\" \".electron-out/electron/**/*.test.js\"",
+    "start": "electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:dir": "npm run build && electron-builder --dir",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "dependencies": {
+    "mongodb": "^7.5.0",
+    "mssql": "^11.0.1",
+    "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "@types/mssql": "^9.1.5",
+    "@types/node": "^22.10.7",
+    "@types/pg": "^8.11.10",
+    "concurrently": "^9.1.2",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.3",
+    "wait-on": "^9.1.0"
+  }
+}

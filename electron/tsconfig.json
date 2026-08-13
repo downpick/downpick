@@ -1,0 +1,25 @@
+{
+  // Single config for everything outside client/. rootDir spans both electron/ and server/,
+  // so the emitted layout is .electron-out/electron/* and .electron-out/server/* — which is
+  // what package.json's "main" field and the test glob both depend on.
+  //
+  // "DOM" is in lib because preload.ts runs in a renderer context and touches `window`.
+  // The main process should not use DOM globals; sandbox/contextIsolation enforce that at
+  // runtime, not the type level.
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2020", "DOM"],
+    "outDir": "../.electron-out",
+    "rootDir": "..",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "sourceMap": true
+  },
+  "include": ["../electron/**/*.ts", "../server/**/*.ts"],
+  "exclude": ["../node_modules", "../client", "../.electron-out"]
+}

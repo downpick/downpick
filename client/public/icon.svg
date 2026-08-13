@@ -1,0 +1,10 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Downpick">
+  <title>Downpick</title>
+  <rect width="200" height="200" rx="32" fill="#0A0A0A"/>
+  <g transform="translate(48,39)" fill="#F5F5F0">
+    <rect x="0" y="0" width="104" height="18"/>
+    <rect x="8" y="24" width="88" height="18"/>
+    <rect x="16" y="48" width="72" height="18"/>
+    <polygon points="24,72 80,72 52,122" fill="#C9A227"/>
+  </g>
+</svg>

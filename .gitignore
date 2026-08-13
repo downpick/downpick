@@ -1,0 +1,52 @@
+# ── Dependencies ────────────────────────────────────────────────────────────────
+# **/ matches at any depth: root, client/, server/, or any future package
+**/node_modules/
+
+# ── Build output ─────────────────────────────────────────────────────────────────
+# .electron-out/ is the compiled main process (electron/ + server/), client/dist is
+# the built renderer, and release/ holds the electron-builder installers. All are
+# reproducible from source.
+.electron-out/
+release/
+dist/
+*.tsbuildinfo
+
+# Generated from build/icon.png by scripts/dev-branding.js on macOS. icon.png is the source.
+build/icon.icns
+build/icon.iconset/
+
+# ── Environment / secrets ────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Logs ────────────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Monaco Editor (downloaded at dev-server startup, not source) ─────────────────
+client/public/vs/
+
+# ── macOS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Windows ──────────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Editor / IDE ─────────────────────────────────────────────────────────────────
+# Keep launch.json (debug config) and extensions.json (recommended extensions)
+# so teammates get the same VS Code debug setup automatically.
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo

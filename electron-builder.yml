@@ -1,0 +1,54 @@
+appId: com.downpick.app
+# productName and author come from package.json, which is also where Electron itself reads
+# the name it shows in the dock and the macOS menu bar. One source of truth for both.
+copyright: Downpick
+
+directories:
+  buildResources: build
+  output: release
+
+# Only the compiled main process, the built renderer, and the manifest. The TypeScript
+# sources, the client's own node_modules, and the Monaco staging copy are all excluded;
+# node_modules for pg/mssql/mongodb is pulled in automatically from "dependencies".
+files:
+  - .electron-out/**/*
+  - client/dist/**/*
+  - package.json
+  # Needed at runtime on Linux, where the window/taskbar icon comes from the BrowserWindow
+  # rather than the bundle. macOS and Windows read theirs from the packaged app itself.
+  - build/icon.png
+  - '!**/*.map'
+  - '!.electron-out/**/*.test.js'
+
+asar: true
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # Unsigned by default. Set CSC_LINK/CSC_KEY_PASSWORD (and notarize) to ship signed builds.
+  identity: null
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+
+linux:
+  category: Development
+  synopsis: Standalone database manager for PostgreSQL, SQL Server, and MongoDB
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
