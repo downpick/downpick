@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/igorklafke/downpick.git"
+    "url": "git+https://github.com/downpick/downpick.git"
   },
   "main": ".electron-out/electron/main.js",
   "scripts": {

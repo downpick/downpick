@@ -11,7 +11,7 @@ macOS, and Linux.
 No prebuilt installers yet — build it from source (Node.js 20+ and npm 9+):
 
 ```bash
-git clone https://github.com/igorklafke/downpick.git && cd downpick && npm install && cd client && npm install && cd ..
+git clone https://github.com/downpick/downpick.git && cd downpick && npm install && cd client && npm install && cd ..
 ```
 
 ```bash

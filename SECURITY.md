@@ -79,5 +79,5 @@ nothing the model writes is executed, and you read the query before running it.
 
 ## Reporting a vulnerability
 
-Open a [security advisory](https://github.com/igorklafke/downpick/security/advisories/new) rather
+Open a [security advisory](https://github.com/downpick/downpick/security/advisories/new) rather
 than a public issue.
