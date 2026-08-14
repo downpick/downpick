@@ -47,8 +47,8 @@ nsis:
 linux:
   category: Development
   synopsis: Standalone database manager for PostgreSQL, SQL Server, and MongoDB
+  # AppImage only. The deb target additionally requires a maintainer email, which means
+  # putting a real address in package.json's "author" — deliberately not done.
   target:
     - target: AppImage
-      arch: [x64]
-    - target: deb
       arch: [x64]
