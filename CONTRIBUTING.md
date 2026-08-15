@@ -63,21 +63,26 @@ This compiles `client/dist/` (the React app, via Vite) and `.electron-out/` (the
 
 ## Packaging
 
-Installers are built with `electron-builder`. Each platform must be built on itself — in
-particular, macOS disk images cannot be produced anywhere but macOS.
+Packages are built with `electron-builder`, configured in `electron-builder.yml`.
 
 ```bash
 npm run dist
 ```
 
-Or one platform at a time: `npm run dist:mac`, `npm run dist:win`, `npm run dist:linux`.
-Output lands in `release/`:
+That builds for the host platform; `npm run dist:mac`, `dist:win`, and `dist:linux` target one
+each. Output lands in `release/`:
 
-| Platform | Artifacts |
-|----------|-----------|
+| Platform | Configured targets |
+|----------|--------------------|
 | macOS | `.dmg` and `.zip`, arm64 + x64 |
-| Windows | NSIS installer and a portable `.exe`, x64 |
-| Linux | `.AppImage` and `.deb`, x64 |
+| Windows | `.zip`, x64 |
+| Linux | `.AppImage`, x64 |
+
+The usual cross-building rules apply — macOS targets need a macOS host, and the others are
+reachable from any host through electron-builder's Docker images. Two targets are configured away
+from the defaults: Windows is a zip rather than an NSIS installer, and Linux has no `.deb`.
+[docs/releasing.md](docs/releasing.md) explains why, alongside the versioning and publishing steps
+for a release.
 
 `npm run dist:dir` produces an unpacked app directory without building installers, which is much
 faster when you only need to check that packaging resolves correctly.

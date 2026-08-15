@@ -8,7 +8,29 @@ macOS, and Linux.
 
 ## Install
 
-No prebuilt installers yet — build it from source (Node.js 20+ and npm 9+):
+Download the latest build from the [releases page](https://github.com/downpick/downpick/releases/latest).
+
+| Platform | File | How to run it |
+|---|---|---|
+| **macOS** (Apple Silicon) | `Downpick-<version>-arm64.dmg` | Open the dmg, drag Downpick to Applications |
+| **macOS** (Intel) | `Downpick-<version>.dmg` | Same |
+| **Linux** (x64) | `Downpick-<version>.AppImage` | `chmod +x` it, then run it |
+| **Windows** (x64) | `Downpick-<version>-win.zip` | Extract anywhere, run `Downpick.exe` |
+
+**The builds are unsigned**, so both desktop platforms will warn you on first launch. On macOS,
+Gatekeeper refuses the app outright — right-click it and choose **Open**, or clear the quarantine
+flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Downpick.app
+```
+
+On Windows, SmartScreen shows a blue banner — choose **More info → Run anyway**. Verify what you
+downloaded against the SHA-256 checksums published in the release notes.
+
+### From source
+
+Node.js 20+ and npm 9+:
 
 ```bash
 git clone https://github.com/downpick/downpick.git && cd downpick && npm install && cd client && npm install && cd ..
@@ -18,7 +40,7 @@ git clone https://github.com/downpick/downpick.git && cd downpick && npm install
 npm run build && npm start
 ```
 
-To produce installers for your platform, see [CONTRIBUTING.md](CONTRIBUTING.md#packaging).
+To build redistributables yourself, see [docs/releasing.md](docs/releasing.md).
 
 ## Features
 
@@ -118,6 +140,7 @@ accelerators are registered.
 ## Documentation
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev mode, tests, packaging, and adding a database engine
+- [docs/releasing.md](docs/releasing.md) — building the redistributables and publishing a release
 - [SECURITY.md](SECURITY.md) — the vault, process isolation, and known limits
 - [docs/ipc.md](docs/ipc.md) — the IPC channel contract between renderer and main
 
