@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { aiChatStream, api, AiHistoryEntry, AiProviderInfo } from '../api';
+import { aiChatStream, api, AiHistoryEntry, AiHistoryMessage } from '../api';
 import { AiMessage, emptyAiChat, Tab, useStore } from '../store';
+import { AiHistoryList } from './AiHistoryList';
 
 /** Starter prompts, mirroring the design's chip row. */
 const SQL_CHIPS = [
@@ -21,9 +22,14 @@ const INSERTED_FLASH_MS = 2400;
  *  give the scroll effect new array identities and re-run it continuously. */
 const NO_CHAT = emptyAiChat();
 
-let messageCounter = 0;
+/**
+ * Ids have to be unique across restarts, not just within a session: a resumed conversation
+ * brings its own message ids back from chats.db, and a counter starting at 1 each launch
+ * would collide with them — duplicate React keys, and insertAiSql matching the wrong
+ * message. Same generator QueryEditor already uses for query ids.
+ */
 function newMessageId() {
-  return `ai-${++messageCounter}`;
+  return crypto.randomUUID();
 }
 
 function Sparkle({ className = '' }: { className?: string }) {
@@ -50,6 +56,26 @@ function NewChatIcon({ className = '' }: { className?: string }) {
     >
       <path d="M7.5 2.5H3.6A1.6 1.6 0 0 0 2 4.1v8.3A1.6 1.6 0 0 0 3.6 14h8.3a1.6 1.6 0 0 0 1.6-1.6V8.5" />
       <path d="M11.6 1.9a1.55 1.55 0 0 1 2.2 2.2L8.5 9.4l-2.8.6.6-2.8 5.3-5.3z" />
+    </svg>
+  );
+}
+
+/** Clock-with-arrow — the usual "what came before" mark. */
+function HistoryIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={className}
+    >
+      <path d="M2.2 8a5.8 5.8 0 1 0 1.9-4.3" />
+      <path d="M2 2.2v3h3" />
+      <path d="M8 5v3.2l2.2 1.3" />
     </svg>
   );
 }
@@ -133,28 +159,38 @@ function AssistantMessage({
   );
 }
 
-export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
+export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidden?: boolean }) {
   const chat = useStore((s) => s.aiChats[tab.id]) ?? NO_CHAT;
   const connType = useStore((s) => s.savedConnections.find((c) => c.id === tab.connectionId)?.type);
-  const { setAiPanelOpen, updateAiChat, clearAiChat, insertAiSql, clearInsertedFlag, openSettings } =
-    useStore.getState();
+  // Fetched once for the app in App.tsx — there is a panel per open tab now, and each one
+  // doing its own round trip would be the same answer N times.
+  const providers = useStore((s) => s.aiProviders);
+  const {
+    setAiPanelOpen,
+    updateAiChat,
+    clearAiChat,
+    insertAiSql,
+    clearInsertedFlag,
+    openSettings,
+    loadAiChat,
+    setAiConversationId,
+    findTabForConversation,
+    setActiveTab,
+  } = useStore.getState();
 
-  const [providers, setProviders] = useState<AiProviderInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const settingsOpen = useStore((s) => s.showSettingsDialog);
-
-  // Refetch on mount and every time the Settings dialog closes. Without the second half,
-  // the panel's own "Configure AI provider" button would send the user to Settings, they
-  // would add a provider, come back — and still be looking at the empty state.
-  useEffect(() => {
-    if (settingsOpen) return;
-    api
-      .aiProviders()
-      .then((r) => setProviders(r.providers))
-      .catch(() => setProviders([]));
-  }, [settingsOpen]);
+  // Saves run one after another. Two in flight at once would both read a null
+  // conversationId and mint a separate row for the same conversation.
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  /**
+   * Bumped whenever the panel stops showing the conversation it was showing — New Chat, or
+   * resuming another one. A save started before the swap must not write its new row id onto
+   * whatever is on screen now, or the next question would overwrite a different chat.
+   */
+  const chatGenRef = useRef(0);
 
   // Every enabled model across every provider — the picker's options, flattened.
   const modelOptions = useMemo(
@@ -177,6 +213,56 @@ export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
 
   // Abandon an in-flight answer if the panel unmounts or the tab is closed.
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  /**
+   * Mirrors this tab's transcript into chats.db.
+   *
+   * Runs as each exchange lands rather than on New Chat or tab close: people leave a
+   * conversation open and quit, and a crash would take the whole thing with it. The write
+   * replaces the entire transcript, so a save that fails needs no repair beyond the next
+   * question.
+   */
+  const persist = useCallback(() => {
+    const chat = useStore.getState().aiChats[tab.id];
+    if (!chat || chat.messages.length === 0) return;
+
+    const messages: AiHistoryMessage[] = chat.messages.map((m) => ({
+      role: m.role,
+      text: m.text,
+      sql: m.sql ?? null,
+      trace: m.trace ?? [],
+      isError: m.isError === true,
+    }));
+
+    const generation = chatGenRef.current;
+
+    saveChainRef.current = saveChainRef.current.then(async () => {
+      // Re-read inside the chain: if this is a follow-up, the first save has landed by now
+      // and the conversation already has its id.
+      const current = useStore.getState().aiChats[tab.id];
+      if (!current) return;
+      try {
+        const { id } = await api.aiHistorySave({
+          conversationId: current.conversationId,
+          connectionId: tab.connectionId,
+          connectionName: tab.connectionName,
+          database: tab.database,
+          messages,
+        });
+        // A null id means history is unavailable, not that anything went wrong.
+        //
+        // The generation check is what stops a save that was already in flight when the
+        // user hit New Chat from stamping its id onto the empty chat that replaced it —
+        // the next question would then save over the conversation they just left.
+        if (id && chatGenRef.current === generation && useStore.getState().aiChats[tab.id]) {
+          setAiConversationId(tab.id, id);
+        }
+      } catch {
+        // Saving is a side effect of asking a question, never the point of it. Nothing here
+        // is worth interrupting the answer the user is reading.
+      }
+    });
+  }, [tab.id, tab.connectionId, tab.connectionName, tab.database, setAiConversationId]);
 
   const send = useCallback(
     async (question: string) => {
@@ -202,12 +288,16 @@ export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const finish = (message: AiMessage) =>
+      // Every terminal path runs through here, so this is the one place a save belongs — an
+      // exchange that ended in an error is still worth keeping.
+      const finish = (message: AiMessage) => {
         updateAiChat(tab.id, (c) => ({
           messages: [...c.messages, message],
           thinking: false,
           liveTrace: [],
         }));
+        persist();
+      };
 
       try {
         let answered = false;
@@ -256,7 +346,7 @@ export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [tab.id, tab.connectionId, tab.database, effectiveModel, updateAiChat],
+    [tab.id, tab.connectionId, tab.database, effectiveModel, updateAiChat, persist],
   );
 
   const handleInsert = useCallback(
@@ -270,10 +360,60 @@ export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
 
   // Starting a new chat has to drop the request still in flight too. Without the abort, an
   // answer to the old question would arrive and land in the empty conversation.
+  //
+  // Nothing is archived on the way out: the conversation is already saved, and the fresh
+  // chat's null conversationId is what makes the next question start a new row.
   const handleNewChat = useCallback(() => {
     abortRef.current?.abort();
+    chatGenRef.current += 1;
     clearAiChat(tab.id);
   }, [tab.id, clearAiChat]);
+
+  /**
+   * Reopens a saved conversation in this tab, and keeps writing back to the same row.
+   *
+   * If another tab already has it open, that tab is brought forward instead of loading a
+   * second copy — two tabs holding one conversationId would each replace the other's turns
+   * on their next save, and the loser would never know.
+   */
+  const handleResume = useCallback(
+    async (id: string) => {
+      const existing = findTabForConversation(id);
+      if (existing) {
+        if (existing !== tab.id) setActiveTab(existing);
+        setHistoryOpen(false);
+        return;
+      }
+
+      try {
+        const detail = await api.aiHistoryGet(id);
+        abortRef.current?.abort();
+        chatGenRef.current += 1;
+        loadAiChat(
+          tab.id,
+          detail.id,
+          // justInserted is deliberately not carried over — it is a two-second flash, not
+          // part of the conversation.
+          detail.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            text: m.text,
+            sql: m.sql,
+            trace: m.trace,
+            isError: m.isError,
+          })),
+          detail.connectionName !== tab.connectionName || detail.database !== tab.database
+            ? { connectionName: detail.connectionName, database: detail.database }
+            : null,
+        );
+        setHistoryOpen(false);
+      } catch {
+        // Deleted from another tab between the list rendering and the click. The list
+        // reloads the next time it is opened.
+      }
+    },
+    [tab.id, tab.connectionName, tab.database, findTabForConversation, setActiveTab, loadAiChat],
+  );
 
   const chips = connType === 'mongodb' ? MONGO_CHIPS : SQL_CHIPS;
 
@@ -284,7 +424,7 @@ export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
 
   return (
     <div
-      style={{ width }}
+      style={{ width, display: hidden ? 'none' : undefined }}
       className="flex-shrink-0 flex flex-col border-l border-surface-2 bg-surface min-w-0"
     >
       {/* Header */}
@@ -294,6 +434,17 @@ export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
           <p className="text-xs font-semibold text-text m-0">Ask AI</p>
           <p className="text-[11px] text-text-dim m-0">Reads your schema · never runs queries</p>
         </div>
+        <button
+          className={`flex items-center justify-center px-1 ${
+            historyOpen ? 'text-accent' : 'text-text-muted hover:text-text'
+          }`}
+          onClick={() => setHistoryOpen((open) => !open)}
+          title="Chat history"
+          aria-label="Chat history"
+          aria-pressed={historyOpen}
+        >
+          <HistoryIcon className="w-4 h-4" />
+        </button>
         <button
           className="text-text-muted hover:text-text flex items-center justify-center px-1"
           onClick={handleNewChat}
@@ -312,114 +463,139 @@ export function AiPanel({ tab, width }: { tab: Tab; width: number }) {
         </button>
       </div>
 
-      {/* Conversation */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 flex flex-col gap-3.5 min-h-0">
-        {!configured ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-2.5 text-center px-2 py-5">
-            <span className="text-2xl text-text-dim leading-none">⚡</span>
-            <p className="text-xs font-semibold text-text m-0">No AI provider configured</p>
-            <p className="text-[11.5px] text-text-dim leading-relaxed max-w-[240px] m-0">
-              Add a provider and API key so Ask AI can generate queries from your schema.
-            </p>
-            <button className="btn-primary text-xs mt-1" onClick={() => openSettings('ai')}>
-              Configure AI provider
-            </button>
-          </div>
-        ) : (
-          <>
-            {chat.messages.map((message) =>
-              message.role === 'user' ? (
-                <div
-                  key={message.id}
-                  className="self-end max-w-[88%] bg-surface-2 border border-surface-3 rounded-lg px-2.5 py-2"
-                >
-                  <p className="text-xs text-text leading-relaxed m-0 whitespace-pre-wrap">
-                    {message.text}
-                  </p>
-                </div>
-              ) : (
-                <AssistantMessage key={message.id} message={message} onInsert={handleInsert} />
-              ),
-            )}
+      {/* Everything below the header. Positioned so the history list can cover the
+          conversation and the composer together, while leaving the header — and the button
+          that closes the list again — reachable. */}
+      <div className="relative flex-1 flex flex-col min-h-0">
+        {historyOpen && (
+          <AiHistoryList
+            activeConversationId={chat.conversationId}
+            onResume={handleResume}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
 
-            {chat.thinking && (
-              <div className="flex flex-col gap-1.5">
-                {chat.liveTrace.map((step, i) => (
-                  <TraceLine key={i} label={step.label} />
+        {/* Conversation */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 flex flex-col gap-3.5 min-h-0">
+          {!configured ? (
+            <div className="flex-1 flex flex-col items-center justify-center gap-2.5 text-center px-2 py-5">
+              <span className="text-2xl text-text-dim leading-none">⚡</span>
+              <p className="text-xs font-semibold text-text m-0">No AI provider configured</p>
+              <p className="text-[11.5px] text-text-dim leading-relaxed max-w-[240px] m-0">
+                Add a provider and API key so Ask AI can generate queries from your schema.
+              </p>
+              <button className="btn-primary text-xs mt-1" onClick={() => openSettings('ai')}>
+                Configure AI provider
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* A resumed conversation can point somewhere other than this tab. Questions
+                  run against the tab's live connection, so say which one plainly rather
+                  than letting the transcript imply the wrong database. */}
+              {chat.origin && (
+                <p className="text-[11px] text-text-dim bg-surface-1 border border-surface-2 rounded px-2 py-1.5 leading-relaxed m-0">
+                  This chat was about{' '}
+                  <span className="text-text-muted">{chat.origin.database}</span> on{' '}
+                  <span className="text-text-muted">{chat.origin.connectionName}</span>. New
+                  questions run against <span className="text-text-muted">{tab.database}</span>.
+                </p>
+              )}
+
+              {chat.messages.map((message) =>
+                message.role === 'user' ? (
+                  <div
+                    key={message.id}
+                    className="self-end max-w-[88%] bg-surface-2 border border-surface-3 rounded-lg px-2.5 py-2"
+                  >
+                    <p className="text-xs text-text leading-relaxed m-0 whitespace-pre-wrap">
+                      {message.text}
+                    </p>
+                  </div>
+                ) : (
+                  <AssistantMessage key={message.id} message={message} onInsert={handleInsert} />
+                ),
+              )}
+
+              {chat.thinking && (
+                <div className="flex flex-col gap-1.5">
+                  {chat.liveTrace.map((step, i) => (
+                    <TraceLine key={i} label={step.label} />
+                  ))}
+                  <TraceLine label="Thinking…" active />
+                </div>
+              )}
+
+              {isFresh && (
+                <p className="text-[11.5px] text-text-dim leading-relaxed m-0">
+                  Ask a question about your data. I can see the tables, columns, and schemas
+                  you&rsquo;re connected to — I only write queries into the editor for you to
+                  review and run.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Composer */}
+        {configured && (
+          <div className="p-3 border-t border-surface-2 flex flex-col gap-2 flex-shrink-0">
+            {isFresh && (
+              <div className="flex flex-wrap gap-1.5">
+                {chips.map((chip) => (
+                  <button
+                    key={chip}
+                    className="text-[11px] text-text-muted hover:text-text border border-surface-3 hover:border-accent rounded-lg px-2 py-1 transition-colors"
+                    onClick={() => void send(chip)}
+                  >
+                    {chip}
+                  </button>
                 ))}
-                <TraceLine label="Thinking…" active />
               </div>
             )}
 
-            {isFresh && (
-              <p className="text-[11.5px] text-text-dim leading-relaxed m-0">
-                Ask a question about your data. I can see the tables, columns, and schemas
-                you&rsquo;re connected to — I only write queries into the editor for you to
-                review and run.
-              </p>
-            )}
-          </>
+            <textarea
+              className="input resize-none text-xs leading-relaxed"
+              rows={2}
+              placeholder="Ask about your data…"
+              value={chat.draft}
+              onChange={(e) => {
+                const draft = e.target.value;
+                updateAiChat(tab.id, () => ({ draft }));
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send(chat.draft);
+                }
+              }}
+            />
+
+            <div className="flex items-center gap-2">
+              <select
+                className="input text-[11.5px] py-1 flex-1 min-w-0"
+                value={effectiveModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+              >
+                {modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="w-8 h-8 flex-shrink-0 rounded-lg bg-accent hover:bg-accent-hover text-surface-1 flex items-center justify-center transition-colors disabled:opacity-50"
+                onClick={() => void send(chat.draft)}
+                disabled={chat.thinking || !chat.draft.trim()}
+                title="Send (Enter)"
+                aria-label="Send"
+              >
+                ➤
+              </button>
+            </div>
+          </div>
         )}
       </div>
-
-      {/* Composer */}
-      {configured && (
-        <div className="p-3 border-t border-surface-2 flex flex-col gap-2 flex-shrink-0">
-          {isFresh && (
-            <div className="flex flex-wrap gap-1.5">
-              {chips.map((chip) => (
-                <button
-                  key={chip}
-                  className="text-[11px] text-text-muted hover:text-text border border-surface-3 hover:border-accent rounded-lg px-2 py-1 transition-colors"
-                  onClick={() => void send(chip)}
-                >
-                  {chip}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <textarea
-            className="input resize-none text-xs leading-relaxed"
-            rows={2}
-            placeholder="Ask about your data…"
-            value={chat.draft}
-            onChange={(e) => {
-              const draft = e.target.value;
-              updateAiChat(tab.id, () => ({ draft }));
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void send(chat.draft);
-              }
-            }}
-          />
-
-          <div className="flex items-center gap-2">
-            <select
-              className="input text-[11.5px] py-1 flex-1 min-w-0"
-              value={effectiveModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-            >
-              {modelOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <button
-              className="w-8 h-8 flex-shrink-0 rounded-lg bg-accent hover:bg-accent-hover text-surface-1 flex items-center justify-center transition-colors disabled:opacity-50"
-              onClick={() => void send(chat.draft)}
-              disabled={chat.thinking || !chat.draft.trim()}
-              title="Send (Enter)"
-              aria-label="Send"
-            >
-              ➤
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

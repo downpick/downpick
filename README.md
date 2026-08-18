@@ -82,6 +82,11 @@ confirmation.
 
 <img src="docs/ai.gif" alt="Ask AI reading the schema and writing a query into the editor" width="100%">
 
+Conversations are kept. Each tab has its own, and the **history** button in the panel header
+lists every past chat — click one to pick it back up, or clear them all from the same place. They
+are saved to `~/.downpick/chats.db` in plain text, so treat that file the way you would your query
+history.
+
 **What leaves your machine:** your question, the conversation so far, and the *names* of the
 schemas, tables, and columns the assistant looks up. No row data is ever sent — it cannot read
 any, because it cannot run a query. On MongoDB, `describe_tables` samples up to 50 documents to
@@ -120,6 +125,8 @@ as you make it rather than on a Save button, so it has a plain **Close**. Jump s
 
 Vault path, query timeout, and auto-lock live in `~/.downpick/settings.json`, which holds no
 secrets. Tab restoration is a renderer-side preference and is stored with the tabs themselves.
+Ask AI conversations are saved to `~/.downpick/chats.db`, unencrypted — see
+[SECURITY.md](SECURITY.md).
 
 ## Keyboard Shortcuts
 

@@ -40,6 +40,11 @@ export const CHANNELS = [
   'ai:providers:models',
   'ai:chat:start',
   'ai:chat:cancel',
+  'ai:history:list',
+  'ai:history:get',
+  'ai:history:save',
+  'ai:history:delete',
+  'ai:history:clear',
 
   'files:save',
   'clipboard:write',
@@ -104,6 +109,54 @@ export type AiStreamEvent =
 export interface AiChatEvent {
   streamId: string;
   event: AiStreamEvent;
+}
+
+/**
+ * Saved Ask AI history.
+ *
+ * These live in `~/.downpick/chats.db`, not the vault — see SECURITY.md. Declared here so
+ * the renderer and the handlers share one definition, the way `AiStreamEvent` already is.
+ */
+export interface AiHistoryMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  sql: string | null;
+  trace: { label: string }[];
+  isError: boolean;
+}
+
+/** A message as it comes back out of storage, carrying the id derived from its position. */
+export interface StoredAiHistoryMessage extends AiHistoryMessage {
+  id: string;
+}
+
+export interface AiConversationSummary {
+  id: string;
+  title: string;
+  connectionId: string;
+  /** Where the conversation started. Never rewritten, so its label in the list is stable. */
+  connectionName: string;
+  database: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+export interface AiConversationDetail extends AiConversationSummary {
+  messages: StoredAiHistoryMessage[];
+}
+
+/** Where a page of history stopped. Carries `id` as well, because timestamps tie. */
+export interface AiHistoryCursor {
+  updatedAt: number;
+  id: string;
+}
+
+export interface AiHistoryPage {
+  items: AiConversationSummary[];
+  nextCursor: AiHistoryCursor | null;
+  /** False when chats.db could not be opened — "unavailable" rather than "no chats". */
+  available: boolean;
 }
 
 export type MenuCommand =

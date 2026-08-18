@@ -1,4 +1,5 @@
 import { registerAiHandlers } from './ai';
+import { registerAiHistoryHandlers } from './aiHistory';
 import { registerConnectionHandlers } from './connections';
 import { registerQueryHandlers } from './query';
 import { registerSchemaHandlers } from './schema';
@@ -19,4 +20,5 @@ export function registerAllHandlers(): void {
   registerSchemaHandlers();
   registerSettingsHandlers();
   registerAiHandlers();
+  registerAiHistoryHandlers();
 }
