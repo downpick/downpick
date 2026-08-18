@@ -69,6 +69,9 @@ test('locks everything until the vault is opened', async () => {
     'connections:list',
     'connections:create',
     'settings:validate',
+    // The panel reads this on unlock, not on mount — it is gated, so a fetch attempted
+    // while still locked comes back empty and the panel would claim nothing is configured.
+    'ai:providers:list',
     // History is not in the vault, but it is still the user's data and stays behind the gate.
     'ai:history:list',
     'ai:history:save',

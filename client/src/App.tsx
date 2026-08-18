@@ -198,13 +198,19 @@ export default function App() {
   }, [refreshVault]);
 
   // Configured providers, fetched here rather than in AiPanel — there is one panel per open
-  // tab now, and they would otherwise each repeat this call. Refetched when the Settings
-  // dialog closes, so adding a provider and coming back does not leave the panels showing
-  // their "no AI provider configured" empty state.
+  // tab now, and they would otherwise each repeat this call.
+  //
+  // Both guards are load-bearing. `ai:providers:list` is behind the vault gate, and this
+  // component mounts while the vault is still locked, so without the unlocked check the one
+  // fetch of the session would 423 and every panel would sit on "no AI provider configured"
+  // until something else happened to refetch. And refetching when the Settings dialog
+  // closes is what stops the panel's own "Configure AI provider" button from sending the
+  // user to Settings, adding a provider, and returning to the same empty state.
+  const vaultUnlocked = Boolean(vaultStatus?.initialized && !vaultStatus.locked);
   useEffect(() => {
-    if (showSettingsDialog) return;
+    if (showSettingsDialog || !vaultUnlocked) return;
     void refreshAiProviders();
-  }, [showSettingsDialog, refreshAiProviders]);
+  }, [showSettingsDialog, vaultUnlocked, refreshAiProviders]);
 
   // The menu items that act on the shell. The query commands are handled inside
   // QueryEditor, which is the only thing that knows which tab is active. Each one calls
