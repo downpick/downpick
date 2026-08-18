@@ -3,6 +3,27 @@ import { AiConversationSummary, AiHistoryCursor, api } from '../api';
 import { useStore } from '../store';
 import { ConfirmDialog } from './ConfirmDialog';
 
+function TrashIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={className}
+    >
+      <path d="M2.6 4.2h10.8" />
+      <path d="M6.3 4.2V3a1 1 0 0 1 1-1h1.4a1 1 0 0 1 1 1v1.2" />
+      <path d="M4 4.2l.55 8.3a1.3 1.3 0 0 0 1.3 1.2h4.3a1.3 1.3 0 0 0 1.3-1.2L12 4.2" />
+      <path d="M6.7 6.9v4" />
+      <path d="M9.3 6.9v4" />
+    </svg>
+  );
+}
+
 /** How many conversations to fetch at a time. */
 const PAGE_SIZE = 30;
 
@@ -169,7 +190,7 @@ export function AiHistoryList({
                 </p>
               </div>
               <button
-                className="text-text-dim hover:text-error leading-none px-1 opacity-0 group-hover:opacity-100 focus:opacity-100 flex-shrink-0"
+                className="text-text-dim hover:text-error px-1 mt-0.5 opacity-0 group-hover:opacity-100 focus:opacity-100 flex-shrink-0 flex items-center justify-center transition-colors"
                 onClick={(e) => {
                   // Without this the row underneath would resume the chat being deleted.
                   e.stopPropagation();
@@ -178,7 +199,7 @@ export function AiHistoryList({
                 title="Delete this chat"
                 aria-label={`Delete chat: ${item.title}`}
               >
-                ×
+                <TrashIcon className="w-3.5 h-3.5" />
               </button>
             </div>
           ))
