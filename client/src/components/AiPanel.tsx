@@ -181,6 +181,7 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
   const [selectedModel, setSelectedModel] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Saves run one after another. Two in flight at once would both read a null
   // conversationId and mint a separate row for the same conversation.
@@ -210,6 +211,21 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat.messages, chat.liveTrace, chat.thinking]);
+
+  // The composer grows with the question, stealing height from the transcript above it. That
+  // changes no React state, so re-pin here or a long question drifts the newest message out of
+  // view. Only on resize — pinning on every keystroke would fight anyone who scrolled up to
+  // read an answer while typing a follow-up.
+  useEffect(() => {
+    const composer = textareaRef.current;
+    if (!composer) return;
+    const observer = new ResizeObserver(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [configured]);
 
   // Abandon an in-flight answer if the panel unmounts or the tab is closed.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -554,8 +570,12 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
               </div>
             )}
 
+            {/* Grows with the question up to 8 lines, then scrolls. `rows` is ignored under
+                field-sizing (it only holds the floor if the stylesheet ever fails to load), so
+                the two-line resting height is the min-h. */}
             <textarea
-              className="input resize-none text-xs leading-relaxed"
+              ref={textareaRef}
+              className="input resize-none text-xs leading-relaxed [field-sizing:content] min-h-[53px] max-h-[170px] overflow-y-auto"
               rows={2}
               placeholder="Ask about your data…"
               value={chat.draft}
