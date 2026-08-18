@@ -36,6 +36,11 @@ API key.
 | `ai:providers:delete` | Remove a provider, and its key with it |
 | `ai:chat:start` | Ask a question. Returns a `streamId`; the answer arrives as events |
 | `ai:chat:cancel` | Abort a running answer by its `streamId` |
+| `ai:history:list` | Page through saved Ask AI conversations, newest first |
+| `ai:history:get` | Load one saved conversation's full transcript |
+| `ai:history:save` | Upsert a conversation and replace its transcript |
+| `ai:history:delete` | Delete one saved conversation and its messages |
+| `ai:history:clear` | Delete every saved conversation |
 | `files:save` | Show the native save dialog and write a file (CSV/XLSX export) |
 
 ## Events

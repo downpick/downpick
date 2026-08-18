@@ -54,11 +54,17 @@ export default function App() {
   const showSettingsDialog = useStore((s) => s.showSettingsDialog);
   const settingsTab = useStore((s) => s.settingsTab);
   const aiPanelOpen = useStore((s) => s.aiPanelOpen);
-  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
 
   // Actions are stable references — read once, never subscribe.
-  const { setActiveTab, closeTab, setShowConnectionDialog, setShowSettingsDialog, openSettings, setSavedConnections } =
-    useStore.getState();
+  const {
+    setActiveTab,
+    closeTab,
+    setShowConnectionDialog,
+    setShowSettingsDialog,
+    openSettings,
+    setSavedConnections,
+    refreshAiProviders,
+  } = useStore.getState();
 
   // Restore persisted panel sizes once (lazy initializer runs a single read).
   const [savedPanels] = useState(loadPanelSizes);
@@ -190,6 +196,15 @@ export default function App() {
     // unlock gate back up from wherever it happened.
     setLockListener(() => setVaultStatus((prev) => (prev ? { ...prev, locked: true } : prev)));
   }, [refreshVault]);
+
+  // Configured providers, fetched here rather than in AiPanel — there is one panel per open
+  // tab now, and they would otherwise each repeat this call. Refetched when the Settings
+  // dialog closes, so adding a provider and coming back does not leave the panels showing
+  // their "no AI provider configured" empty state.
+  useEffect(() => {
+    if (showSettingsDialog) return;
+    void refreshAiProviders();
+  }, [showSettingsDialog, refreshAiProviders]);
 
   // The menu items that act on the shell. The query commands are handled inside
   // QueryEditor, which is the only thing that knows which tab is active. Each one calls
@@ -374,16 +389,28 @@ export default function App() {
           )}
         </div>
 
-        {/* Ask AI — one rail for the app, scoped to whichever tab is active. It needs a
-            tab to know which database to introspect, so it hides when none is open. */}
-        {aiPanelOpen && activeTab && (
+        {/* Ask AI — one rail for the app, holding a panel per tab. It needs a tab to know
+            which database to introspect, so it hides when none is open.
+
+            The panels are all kept mounted and toggled with display:none, exactly like the
+            editor and results panes above. That is what lets an answer keep streaming while
+            the user works in another tab: unmounting aborts the request (see AiPanel's
+            cleanup), so switching tabs used to throw away whatever was still generating. */}
+        {aiPanelOpen && tabs.length > 0 && (
           <>
             {/* Horizontal resize handle (main area ↔ Ask AI) */}
             <div
               className="w-1.5 bg-surface-2 hover:bg-accent/40 cursor-col-resize flex-shrink-0 transition-colors"
               onMouseDown={onAiPanelDragStart}
             />
-            <AiPanel key={activeTab.id} tab={activeTab} width={effectiveAiPanelWidth} />
+            {tabs.map((tab) => (
+              <AiPanel
+                key={tab.id}
+                tab={tab}
+                width={effectiveAiPanelWidth}
+                hidden={tab.id !== activeTabId}
+              />
+            ))}
           </>
         )}
       </div>

@@ -1,8 +1,14 @@
 import type {
+  AiConversationDetail,
+  AiConversationSummary,
+  AiHistoryCursor,
+  AiHistoryMessage,
+  AiHistoryPage,
   AiStreamEvent,
   Channel,
   ClipboardWriteRequest,
   SaveFileRequest,
+  StoredAiHistoryMessage,
 } from '../../server/channels';
 
 /**
@@ -107,6 +113,14 @@ export interface AiHistoryEntry {
 }
 
 export type { AiStreamEvent };
+export type {
+  AiConversationDetail,
+  AiConversationSummary,
+  AiHistoryCursor,
+  AiHistoryMessage,
+  AiHistoryPage,
+  StoredAiHistoryMessage,
+};
 
 export interface AppSettings {
   vaultFilePath: string;
@@ -223,6 +237,25 @@ export const api = {
     baseUrl?: string;
     apiKey?: string;
   }) => invoke<{ models: string[] }>('ai:providers:models', body),
+
+  // Ask AI history. Stored in ~/.downpick/chats.db, outside the vault — see SECURITY.md.
+  aiHistoryList: (body?: { limit?: number; before?: AiHistoryCursor | null }) =>
+    invoke<AiHistoryPage>('ai:history:list', body ?? {}),
+  aiHistoryGet: (id: string) => invoke<AiConversationDetail>('ai:history:get', { id }),
+  /**
+   * Upserts a conversation and replaces its transcript wholesale. `conversationId` is null
+   * on the first save of a chat; the id that comes back is what links the tab to the row.
+   * A null id in the reply means history is unavailable, not that the call failed.
+   */
+  aiHistorySave: (body: {
+    conversationId: string | null;
+    connectionId: string;
+    connectionName: string;
+    database: string;
+    messages: AiHistoryMessage[];
+  }) => invoke<{ id: string | null }>('ai:history:save', body),
+  aiHistoryDelete: (id: string) => invoke<{ ok: boolean }>('ai:history:delete', { id }),
+  aiHistoryClear: () => invoke<{ ok: boolean; deleted: number }>('ai:history:clear'),
 };
 
 function abortError(): Error {

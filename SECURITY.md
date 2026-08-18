@@ -68,6 +68,10 @@ Worth stating plainly:
   for the life of a connection.
 - **Query text.** Open tabs are persisted to the app's own `localStorage` in plaintext, unaffected
   by locking. Turn off "Restore open tabs on launch" in Settings if your queries contain secrets.
+- **Ask AI transcripts.** Past conversations are saved unencrypted to `~/.downpick/chats.db`
+  (mode `0600` inside the `0700` directory), unaffected by locking. They hold your questions, the
+  queries the assistant wrote, and the schema names it looked up along the way. **Clear all
+  history** in the Ask AI panel's history list deletes them.
 - **A swapped-in vault file.** GCM detects tampering within a file, not the substitution of a
   whole different one.
 - **What Ask AI sends out.** Using it hands your schema *names* to a third-party API. The

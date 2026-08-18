@@ -9,6 +9,12 @@ export const DOWNPICK_DIR = path.join(
 export const DEFAULT_VAULT_PATH = path.join(DOWNPICK_DIR, 'vault.enc');
 
 /**
+ * Ask AI transcripts. Unlike the vault path this one is not user-configurable, so nothing
+ * has to override it at startup — the storage layer opens it lazily on first use.
+ */
+export const DEFAULT_CHATS_DB_PATH = path.join(DOWNPICK_DIR, 'chats.db');
+
+/**
  * Creates the app directory with owner-only permissions, and tightens it if an earlier
  * version of the app left it world-readable. Everything secret this app owns lives here,
  * so 0700 is the floor. chmod is best-effort: it is a no-op on Windows and can fail on

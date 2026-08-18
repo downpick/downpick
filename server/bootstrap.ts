@@ -1,3 +1,4 @@
+import { closeChats } from './chats/db';
 import { cancelAllAiStreams } from './handlers/ai';
 import { closeAllConnections } from './handlers/connections';
 import { registerAllHandlers } from './handlers';
@@ -32,6 +33,8 @@ export function bootstrap(): void {
  */
 export async function shutdown(): Promise<void> {
   cancelAllAiStreams();
+  // History is a plain file handle, not a socket, but it is ours to release.
+  closeChats();
   await vault.lock();
   // The vault can already be locked, in which case the handler above did not run.
   await closeAllConnections();

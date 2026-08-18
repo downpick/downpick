@@ -14,7 +14,12 @@ process.env.USERPROFILE = HOME;
 const { bootstrap } = require('./bootstrap') as typeof import('./bootstrap');
 const { dispatch, registeredChannels } = require('./dispatch') as typeof import('./dispatch');
 const { CHANNELS } = require('./channels') as typeof import('./channels');
-import type { AiStreamEvent, Envelope } from './channels';
+import type {
+  AiConversationDetail,
+  AiHistoryPage,
+  AiStreamEvent,
+  Envelope,
+} from './channels';
 
 const PASSWORD = 'a very long master password';
 const VAULT_PATH = path.join(HOME, '.downpick', 'vault.enc');
@@ -60,7 +65,14 @@ test('locks everything until the vault is opened', async () => {
     path: VAULT_PATH,
   });
 
-  for (const channel of ['connections:list', 'connections:create', 'settings:validate']) {
+  for (const channel of [
+    'connections:list',
+    'connections:create',
+    'settings:validate',
+    // History is not in the vault, but it is still the user's data and stays behind the gate.
+    'ai:history:list',
+    'ai:history:save',
+  ]) {
     const res = await fails(channel, {});
     assert.equal(res.status, 423, channel);
   }
@@ -433,4 +445,49 @@ test('a model added after the fact is kept, and the key survives the edit', asyn
   } finally {
     await ok('ai:providers:delete', { id });
   }
+});
+
+test('history round-trips through the channels: save, list, get, delete', async () => {
+  const saved = await ok<{ id: string | null }>('ai:history:save', {
+    conversationId: null,
+    connectionId: 'conn-1',
+    connectionName: 'Local',
+    database: 'appdb',
+    messages: [
+      { role: 'user', text: 'which tables exist?', sql: null, trace: [], isError: false },
+      {
+        role: 'assistant',
+        text: 'These ones.',
+        sql: 'SELECT 1;',
+        trace: [{ label: 'list_tables' }],
+        isError: false,
+      },
+    ],
+  });
+  assert.ok(saved.id, 'save should mint a conversation id');
+
+  const page = await ok<AiHistoryPage>('ai:history:list', {});
+  assert.equal(page.available, true);
+  const listed = page.items.find((i) => i.id === saved.id);
+  assert.equal(listed?.title, 'which tables exist?');
+  assert.equal(listed?.messageCount, 2);
+
+  const detail = await ok<AiConversationDetail>('ai:history:get', { id: saved.id });
+  assert.equal(detail.messages.length, 2);
+  assert.equal(detail.messages[1].sql, 'SELECT 1;');
+  assert.deepEqual(detail.messages[1].trace, [{ label: 'list_tables' }]);
+
+  await ok('ai:history:delete', { id: saved.id });
+  const gone = await fails('ai:history:get', { id: saved.id });
+  assert.equal(gone.status, 404);
+});
+
+test('history rejects a save with nothing usable in it', async () => {
+  // Every entry is malformed, so parseMessages drops them all and the save has no content.
+  const res = await fails('ai:history:save', {
+    connectionId: 'conn-1',
+    database: 'appdb',
+    messages: [{ role: 42, text: 'nope' }, { role: 'user' }, 'not an object'],
+  });
+  assert.equal(res.status, 400);
 });

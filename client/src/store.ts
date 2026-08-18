@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { api, AiProviderInfo } from './api';
 import {
   loadTabs,
   loadPersistFlag,
@@ -108,9 +109,16 @@ export interface AiMessage {
 }
 
 /**
- * One tab's conversation. Deliberately in-memory only: persistence.ts already keeps raw SQL
- * in localStorage forever, and transcripts plus schema detail would widen that considerably
- * without the vault ever protecting any of it.
+ * One tab's conversation.
+ *
+ * The transcript is mirrored into `~/.downpick/chats.db` as each exchange completes, so it
+ * outlives New Chat, closing the tab, and quitting; `conversationId` is the link to that
+ * row. That file is not in the vault and is not encrypted — the tradeoff, and how to clear
+ * it, are stated in SECURITY.md.
+ *
+ * What lives here and never reaches disk is the runtime half: `draft`, `liveTrace`,
+ * `thinking`, and `AiMessage.justInserted`. Same split `PersistedTab` makes in
+ * persistence.ts, for the same reason — none of it means anything after a reload.
  */
 export interface AiChat {
   messages: AiMessage[];
@@ -118,10 +126,24 @@ export interface AiChat {
   /** Trace lines that have arrived for the answer currently being generated. */
   liveTrace: AiTraceStep[];
   thinking: boolean;
+  /** Row in chats.db this transcript is saved to. Null until the first exchange lands. */
+  conversationId: string | null;
+  /**
+   * Where a resumed conversation started, when that is not where this tab points. Kept in
+   * the store rather than component state so the notice survives the panel remounting.
+   */
+  origin: { connectionName: string; database: string } | null;
 }
 
 export function emptyAiChat(): AiChat {
-  return { messages: [], draft: '', liveTrace: [], thinking: false };
+  return {
+    messages: [],
+    draft: '',
+    liveTrace: [],
+    thinking: false,
+    conversationId: null,
+    origin: null,
+  };
 }
 
 export interface ActiveConnection {
@@ -190,6 +212,28 @@ interface AppState {
   /** Pushes generated SQL into a tab's editor and flags it as unrun AI output. */
   insertAiSql: (tabId: string, messageId: string, sql: string) => void;
   clearInsertedFlag: (tabId: string, messageId: string) => void;
+  /** Drops a saved conversation into a tab, replacing whatever it was showing. */
+  loadAiChat: (
+    tabId: string,
+    conversationId: string,
+    messages: AiMessage[],
+    origin: { connectionName: string; database: string } | null,
+  ) => void;
+  /** Records the row id the first save minted. */
+  setAiConversationId: (tabId: string, conversationId: string) => void;
+  /** Unlinks a deleted conversation from every tab still holding it. */
+  forgetAiConversation: (conversationId: string) => void;
+  forgetAllAiConversations: () => void;
+  /** The tab already showing this conversation, so resuming can go there instead of forking. */
+  findTabForConversation: (conversationId: string) => string | null;
+
+  /**
+   * Configured AI providers, fetched once for the whole app. Every open tab has its own
+   * mounted AI panel, so leaving this to the panel would mean one identical round trip per
+   * tab every time the Settings dialog closes.
+   */
+  aiProviders: AiProviderInfo[];
+  refreshAiProviders: () => Promise<void>;
 
   // When enabled, open tabs are saved to localStorage and restored on next launch.
   persistTabs: boolean;
@@ -212,7 +256,7 @@ for (const t of restored.tabs) {
   if (m) tabCounter = Math.max(tabCounter, Number(m[1]));
 }
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>((set, get) => ({
   savedConnections: [],
   setSavedConnections: (conns) => set({ savedConnections: conns }),
 
@@ -373,7 +417,8 @@ export const useStore = create<AppState>((set) => ({
       if (activeTabId === tabId) {
         activeTabId = tabs.length > 0 ? tabs[tabs.length - 1].id : null;
       }
-      // The conversation belongs to the tab — closing one drops the other.
+      // The conversation belongs to the tab — closing one drops the other. Since the
+      // transcript is already in chats.db, what goes here is the cache, not the data.
       const { [tabId]: _closed, ...aiChats } = s.aiChats;
       return { tabs, activeTabId, aiChats };
     }),
@@ -467,6 +512,63 @@ export const useStore = create<AppState>((set) => ({
         },
       };
     }),
+
+  // Starts from emptyAiChat() rather than the tab's current chat: a restored conversation
+  // should not inherit a half-typed draft or a trace left over from what was there before.
+  loadAiChat: (tabId, conversationId, messages, origin) =>
+    set((s) => ({
+      aiChats: { ...s.aiChats, [tabId]: { ...emptyAiChat(), messages, conversationId, origin } },
+    })),
+
+  setAiConversationId: (tabId, conversationId) =>
+    set((s) => {
+      const chat = s.aiChats[tabId];
+      if (!chat) return s;
+      return { aiChats: { ...s.aiChats, [tabId]: { ...chat, conversationId } } };
+    }),
+
+  // Without this, deleting a conversation from the history list would only remove the row:
+  // the tab still holding its id would upsert it straight back into existence on the next
+  // question, under the same id the user just deleted.
+  forgetAiConversation: (conversationId) =>
+    set((s) => {
+      const entries = Object.entries(s.aiChats);
+      if (!entries.some(([, chat]) => chat.conversationId === conversationId)) return s;
+      return {
+        aiChats: Object.fromEntries(
+          entries.map(([id, chat]) =>
+            chat.conversationId === conversationId ? [id, { ...chat, conversationId: null }] : [id, chat],
+          ),
+        ),
+      };
+    }),
+
+  forgetAllAiConversations: () =>
+    set((s) => ({
+      aiChats: Object.fromEntries(
+        Object.entries(s.aiChats).map(([id, chat]) => [id, { ...chat, conversationId: null }]),
+      ),
+    })),
+
+  findTabForConversation: (conversationId) => {
+    const { aiChats, tabs } = get();
+    const match = Object.entries(aiChats).find(
+      ([tabId, chat]) => chat.conversationId === conversationId && tabs.some((t) => t.id === tabId),
+    );
+    return match ? match[0] : null;
+  },
+
+  aiProviders: [],
+  refreshAiProviders: async () => {
+    try {
+      const { providers } = await api.aiProviders();
+      set({ aiProviders: providers });
+    } catch {
+      // Locked vault or a read failure. An empty list is what the panel already renders as
+      // "no AI provider configured", which is the honest thing to show either way.
+      set({ aiProviders: [] });
+    }
+  },
 
   persistTabs: persistTabsEnabled,
   setPersistTabs: (enabled) =>
