@@ -124,6 +124,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
     setSavedConnections,
     disconnectConnection,
     setDatabasesList,
+    setDatabasesLoading,
     setDatabasesError,
     setConnecting,
     setConnectError,
@@ -181,6 +182,26 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
       else setConnectError(conn.id, message);
     } finally {
       setConnecting(conn.id, false);
+    }
+  }
+
+  /**
+   * Re-reads the database list of a connection that is already up — for databases created or
+   * dropped outside the app. `connections:connect` reuses the live driver, so this is a single
+   * round-trip that leaves the connection and its loaded schemas in place.
+   */
+  async function handleRefreshDatabases(conn: SavedConnection) {
+    const active = useStore.getState().activeConnections[conn.id];
+    // Nothing to refresh until the connection is up, and a second click while the round-trip
+    // is in flight would only duplicate the work.
+    if (!active || active.databasesLoading) return;
+    setDatabasesLoading(conn.id, true);
+    try {
+      setDatabasesList(conn.id, (await api.connect(conn.id)).databases);
+    } catch (e: unknown) {
+      // Deliberately not setConnectError: the connection stays connected as far as the tree is
+      // concerned, so a failed refresh must not flip its status dot to disconnected.
+      setDatabasesError(conn.id, e instanceof Error ? e.message : 'Failed to refresh databases');
     }
   }
 
@@ -361,6 +382,15 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
           active
             ? { label: 'Disconnect', onSelect: () => void handleDisconnect(row.conn) }
             : { label: 'Connect', onSelect: () => void handleConnect(row.conn) },
+          // A disconnected connection has no database list to reload — connecting is the refresh.
+          ...(active
+            ? [
+                {
+                  label: 'Refresh databases',
+                  onSelect: () => void handleRefreshDatabases(row.conn),
+                },
+              ]
+            : []),
           { label: 'Edit…', onSelect: () => setEditingConn(row.conn) },
           { label: 'Delete', danger: true, onSelect: () => void handleDelete(row.conn) },
         ];
@@ -579,7 +609,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
           active ? '' : ' (click to connect)'
         }`,
         dot: status,
-        busy: connecting,
+        busy: connecting || !!active?.databasesLoading,
         error: connectErrors[conn.id]?.message ?? active?.databasesError ?? undefined,
         onRetry: () => void handleConnect(conn),
         conn,

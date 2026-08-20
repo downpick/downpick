@@ -176,6 +176,7 @@ interface AppState {
   disconnectConnection: (id: string) => void;
   // Initializes (or updates) connection entry with the fetched databases list
   setDatabasesList: (id: string, databases: string[]) => void;
+  setDatabasesLoading: (id: string, loading: boolean) => void;
   setDatabasesError: (id: string, error: string) => void;
   // Combined action: store schema for a database AND open a new tab — one render cycle
   openDatabaseAndTab: (connId: string, connName: string, database: string, schema: SchemaTree) => void;
@@ -295,13 +296,34 @@ export const useStore = create<AppState>((set, get) => ({
   setDatabasesList: (id, databases) =>
     set((s) => {
       const { [id]: _, ...connectErrors } = s.connectErrors;
+      const existing = s.activeConnections[id];
+      // On a refresh the list can come back without a database that used to be there.
+      // Drop its cached schema rather than leaving a tree nothing can reach any more.
+      // Open tabs are left alone on purpose: closing an editor out from under someone is
+      // worse than a tab whose next query reports the database is gone.
+      const schemas = existing
+        ? Object.fromEntries(Object.entries(existing.schemas).filter(([db]) => databases.includes(db)))
+        : {};
       return {
         connectErrors,
         activeConnections: {
           ...s.activeConnections,
-          [id]: s.activeConnections[id]
-            ? { ...s.activeConnections[id], databases, databasesLoading: false, databasesError: null }
-            : { id, databases, databasesLoading: false, databasesError: null, schemas: {} },
+          [id]: existing
+            ? { ...existing, databases, databasesLoading: false, databasesError: null, schemas }
+            : { id, databases, databasesLoading: false, databasesError: null, schemas },
+        },
+      };
+    }),
+
+  setDatabasesLoading: (id, loading) =>
+    set((s) => {
+      // Only a connected connection has a list to reload — never conjure an entry here,
+      // since its presence is what marks a connection as connected.
+      if (!s.activeConnections[id]) return s;
+      return {
+        activeConnections: {
+          ...s.activeConnections,
+          [id]: { ...s.activeConnections[id], databasesLoading: loading },
         },
       };
     }),
