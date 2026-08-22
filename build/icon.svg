@@ -1,0 +1,22 @@
+<!--
+  macOS bundle artwork. Deliberately *not* the same geometry as client/public/icon.svg.
+
+  macOS draws app icons unmasked, so the bleed margin has to be baked in: Apple's icon grid
+  puts the rounded-square body in the middle 824 of a 1024 canvas, leaving 100 transparent on
+  every side. A full-bleed icon renders ~24% wider than every neighbour in the dock.
+
+  client/public/icon.svg stays full-bleed on purpose — as a favicon and as the Linux
+  BrowserWindow icon it is drawn into a box that is already the right size.
+
+  build/icon.png is rendered from this file; scripts/dev-branding.js turns that into icon.icns.
+-->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Downpick">
+  <title>Downpick</title>
+  <rect x="100" y="100" width="824" height="824" rx="184.32" fill="#0A0A0A"/>
+  <g transform="translate(297.76,260.68)" fill="#F5F5F0">
+    <rect x="0" y="0" width="428.48" height="74.16"/>
+    <rect x="32.96" y="98.88" width="362.56" height="74.16"/>
+    <rect x="65.92" y="197.76" width="296.64" height="74.16"/>
+    <polygon points="98.88,296.64 329.6,296.64 214.24,502.64" fill="#C9A227"/>
+  </g>
+</svg>

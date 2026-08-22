@@ -63,23 +63,32 @@ function main() {
   if (process.platform !== 'darwin') return;
   if (!fs.existsSync(PLIST)) return; // electron not installed yet, or a partial install
 
-  const haveIcns = ensureIcns();
-  if (plist('Print :CFBundleName') === NAME) return; // already branded
-
-  plist(`Set :CFBundleName ${NAME}`);
-  // CFBundleDisplayName is what the dock actually renders; it may not exist yet.
-  try {
-    plist(`Set :CFBundleDisplayName ${NAME}`);
-  } catch {
-    plist(`Add :CFBundleDisplayName string ${NAME}`);
-  }
+  let changed = false;
 
   // The dock icon is read from the bundle before any JS runs, so app.dock.setIcon() alone
   // leaves a visible flash of the Electron logo at launch. Replacing the file removes it.
-  if (haveIcns) {
+  // Compared on every run, not just the first: an edit to build/icon.png has to reach a
+  // bundle that was already branded by an earlier install.
+  if (ensureIcns()) {
     const target = path.join(APP, 'Contents/Resources', plist('Print :CFBundleIconFile'));
-    fs.copyFileSync(ICNS, target);
+    if (!fs.existsSync(target) || !fs.readFileSync(target).equals(fs.readFileSync(ICNS))) {
+      fs.copyFileSync(ICNS, target);
+      changed = true;
+    }
   }
+
+  if (plist('Print :CFBundleName') !== NAME) {
+    plist(`Set :CFBundleName ${NAME}`);
+    // CFBundleDisplayName is what the dock actually renders; it may not exist yet.
+    try {
+      plist(`Set :CFBundleDisplayName ${NAME}`);
+    } catch {
+      plist(`Add :CFBundleDisplayName string ${NAME}`);
+    }
+    changed = true;
+  }
+
+  if (!changed) return;
 
   // Editing the bundle invalidates its ad-hoc signature, and macOS kills unsigned-but-
   // formerly-signed binaries on Apple Silicon. Re-sign ad-hoc to make it launchable again.
@@ -96,7 +105,7 @@ function main() {
     // Best-effort only — the name is already correct on the next fresh launch.
   }
 
-  console.log(`dev-branding: relabelled the development Electron bundle as ${NAME}`);
+  console.log(`dev-branding: updated the development Electron bundle (${NAME})`);
 }
 
 try {
