@@ -44,13 +44,28 @@ export interface SchemaTree {
   databases: DatabaseNode[];
 }
 
+/** One statement's outcome, in execution order. Mirrors the server's StatementSummary. */
+export interface StatementSummary {
+  /** Driver-supplied verb ('UPDATE', 'CREATE', 'insertMany'). SQL Server exposes none. */
+  command?: string;
+  /** Rows the statement changed. Undefined for statements that report no count. */
+  rowsAffected?: number;
+  /** Rows returned, when the statement produced a result set. */
+  rowCount?: number;
+}
+
 export interface QueryResult {
   columns: string[];
   columnTypes?: string[];
   // Positional: rows[i][n] is the value of columns[n]. Column names are not usable as
   // keys because a query can return two columns with the same name.
   rows: unknown[][];
+  /** Rows returned in `rows` — never an affected-row count, which lives in `rowsAffected`. */
   rowCount: number;
+  /** Rows changed across every statement in the batch. Undefined when none reported one. */
+  rowsAffected?: number;
+  /** One entry per statement the driver reported on. Drives the Messages view. */
+  statements?: StatementSummary[];
   executionTime: number;
   truncated?: boolean;
   // Raw (non-flattened) documents, populated by document-oriented drivers (MongoDB) so the
@@ -73,6 +88,10 @@ export interface Tab {
   result: QueryResult | null;
   error: string | null;
   isRunning: boolean;
+  /** When the in-flight query started, for the live elapsed timer. Set with `isRunning`. */
+  runStartedAt?: number;
+  /** Id the server maps a cancel request back to, so any component can stop the query. */
+  runQueryId?: string;
   /** Set when the current SQL came from the assistant and has not been run since. */
   fromAi?: boolean;
   /**
@@ -83,6 +102,12 @@ export interface Tab {
    */
   viewMode?: 'table' | 'documents';
   /**
+   * Results grid or the Messages list. Every new result picks the side that has something
+   * to show — a statement with no result set (UPDATE, CREATE INDEX) would otherwise land
+   * on an empty grid — and the status bar lets the user switch back.
+   */
+  resultView?: 'results' | 'messages';
+  /**
    * Bumped every time the assistant pushes SQL in. Monaco is uncontrolled, so comparing
    * `sql` alone would silently skip an insert that matches what the store already holds —
    * which is exactly what happens when the user inserts a query, edits it, then hits
@@ -90,6 +115,12 @@ export interface Tab {
    */
   sqlRevision?: number;
 }
+
+/**
+ * The run fields, cleared. Spread by every terminal state (result, error) so a finished
+ * query can never leave a timer ticking against a `runStartedAt` that no longer applies.
+ */
+const IDLE = { isRunning: false, runStartedAt: undefined, runQueryId: undefined } as const;
 
 export interface AiTraceStep {
   label: string;
@@ -192,8 +223,9 @@ interface AppState {
   updateTabSql: (tabId: string, sql: string) => void;
   setTabResult: (tabId: string, result: QueryResult) => void;
   setTabViewMode: (tabId: string, viewMode: 'table' | 'documents') => void;
+  setTabResultView: (tabId: string, resultView: 'results' | 'messages') => void;
   setTabError: (tabId: string, error: string | null) => void;
-  setTabRunning: (tabId: string, running: boolean) => void;
+  beginTabRun: (tabId: string, queryId: string) => void;
 
   showConnectionDialog: boolean;
   setShowConnectionDialog: (show: boolean) => void;
@@ -458,7 +490,17 @@ export const useStore = create<AppState>((set, get) => ({
         // viewMode resets here rather than in an effect: a new result is exactly when the
         // choice stops applying, and the old documents are gone the moment this lands.
         t.id === tabId
-          ? { ...t, result, error: null, isRunning: false, fromAi: false, viewMode: 'table' }
+          ? {
+              ...t,
+              result,
+              error: null,
+              ...IDLE,
+              fromAi: false,
+              viewMode: 'table',
+              // A statement with no result set (UPDATE, CREATE INDEX) has nothing for the
+              // grid, so it opens on its message instead of on an empty table.
+              resultView: result.columns.length > 0 ? 'results' : 'messages',
+            }
           : t
       ),
     })),
@@ -466,15 +508,32 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, viewMode } : t)),
     })),
+  setTabResultView: (tabId, resultView) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resultView } : t)),
+    })),
   setTabError: (tabId, error) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.id === tabId ? { ...t, error, result: null, isRunning: false, fromAi: false } : t
+        t.id === tabId ? { ...t, error, result: null, ...IDLE, fromAi: false } : t
       ),
     })),
-  setTabRunning: (tabId, running) =>
+  // Starting a run drops the previous result immediately. Leaving it on screen under a new
+  // query's timer invites reading stale rows as if they were the new answer.
+  beginTabRun: (tabId, queryId) =>
     set((s) => ({
-      tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, isRunning: running } : t)),
+      tabs: s.tabs.map((t) =>
+        t.id === tabId
+          ? {
+              ...t,
+              result: null,
+              error: null,
+              isRunning: true,
+              runStartedAt: Date.now(),
+              runQueryId: queryId,
+            }
+          : t
+      ),
     })),
 
   showConnectionDialog: false,

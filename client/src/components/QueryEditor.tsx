@@ -4,6 +4,7 @@ import type * as Monaco from 'monaco-editor';
 import { format } from 'sql-formatter';
 import { useStore, Tab } from '../store';
 import { api } from '../api';
+import { cancelTabQuery } from '../queryRun';
 import { registerEditor, unregisterEditor, saveTabs } from '../persistence';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -132,9 +133,9 @@ function unsafeStatements(sql: string): string[] {
 }
 
 // Custom memo comparison: re-render only when fields QueryEditor actually uses change.
-// Excludes tab.result, tab.error, tab.isRunning — those are rendered by ResultsGrid and
-// the tab bar in App, not here. This prevents the Monaco editor from reacting to every
-// setTabRunning / setTabResult call, which was causing a synchronous render cascade.
+// Excludes tab.result and tab.error — those are rendered by ResultsGrid, not here. This
+// prevents the Monaco editor from reacting to every setTabResult call, which was causing a
+// synchronous render cascade.
 function tabPropsEqual(prev: QueryEditorProps, next: QueryEditorProps) {
   return (
     prev.tab.id === next.tab.id &&
@@ -142,6 +143,10 @@ function tabPropsEqual(prev: QueryEditorProps, next: QueryEditorProps) {
     prev.tab.connectionName === next.tab.connectionName &&
     prev.tab.database === next.tab.database &&
     prev.tab.sql === next.tab.sql &&
+    // isRunning is the exception among the runtime fields: it swaps the toolbar's Run
+    // button for Stop, so this component does have to see it. Twice per query, and Monaco
+    // itself is uncontrolled — the re-render never reaches the editor's model.
+    prev.tab.isRunning === next.tab.isRunning &&
     // Both drive the toolbar: fromAi shows the badge, sqlRevision forces a re-push of
     // assistant SQL that happens to match what the store already holds.
     prev.tab.fromAi === next.tab.fromAi &&
@@ -169,10 +174,11 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
   const aiPanelOpen = useStore((s) => s.aiPanelOpen);
   const setAiPanelOpen = useStore.getState().setAiPanelOpen;
 
-  // Local running state: clicking Run updates only this component, not the whole app.
-  // This avoids the Zustand -> App re-render -> SchemaTree/ConnectionPanel cascade
-  // that was freezing the browser.
-  const [isRunning, setIsRunning] = useState(false);
+  // Running state lives on the tab, not here: the results pane and the status bar both
+  // show the run, and the tab bar marks a query still going in a background tab. It costs
+  // one extra store write per query (at the start; the finish already went through
+  // setTabResult) — the ticking timer stays out of the store entirely, see ElapsedTime.
+  const isRunning = tab.isRunning;
   // Drives the button label ("Run" vs "Run Selection") — updates only when selection
   // transitions between empty ↔ non-empty, so renders are infrequent.
   const [hasSelection, setHasSelection] = useState(false);
@@ -200,8 +206,6 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
   // a useCallback dependency (which would force re-registering the keyboard command).
   const selectionRef = useRef<Monaco.Selection | null>(null);
   const tabIdRef = useRef(tab.id);
-  // Id of the currently running query, used to cancel it via the Stop button.
-  const queryIdRef = useRef<string | null>(null);
   // Tracks the last SQL we pushed into the editor from outside (on mount or from SchemaTree).
   const lastExternalSqlRef = useRef(tab.sql);
   // Populated after runQuery/formatQuery are defined below; kept as refs so
@@ -301,6 +305,13 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     const editor = editorRef.current;
     if (!editor) return;
 
+    // One query per tab. The toolbar shows Stop rather than Run while one is in flight, but
+    // F5, Ctrl+Enter and the Query menu all reach this directly — and a statement waiting on
+    // a lock holds its pool connection the whole time, so a few impatient re-runs against a
+    // blocked table can take every connection the pool has and leave the app with nothing
+    // left to answer anything, the schema tree included.
+    if (useStore.getState().tabs.find((t) => t.id === tab.id)?.isRunning) return;
+
     // Use the selected text when a non-empty selection exists; otherwise run everything.
     const selection = selectionRef.current;
     const sql =
@@ -328,12 +339,12 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
       if (!ok) return;
     }
 
-    // Unique id so the server can map a Stop request back to this exact query.
+    // Unique id so the server can map a Stop request back to this exact query. It goes on
+    // the tab so the Cancel button in the results pane can reach it too.
     const queryId = crypto.randomUUID();
-    queryIdRef.current = queryId;
 
-    // Immediate local feedback — no Zustand update, only this component re-renders.
-    setIsRunning(true);
+    // Clears the previous result and starts the timer.
+    useStore.getState().beginTabRun(tab.id, queryId);
 
     try {
       const result = await api.query(tab.connectionId, tab.database, sql, queryId);
@@ -342,22 +353,13 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
       const message = e instanceof Error ? e.message : 'Query failed';
       const line = e instanceof Error ? (e as Error & { line?: number }).line : undefined;
       useStore.getState().setTabError(tab.id, line ? `Line ${line}: ${message}` : message);
-    } finally {
-      queryIdRef.current = null;
-      setIsRunning(false);
     }
   }, [tab.id, tab.connectionId, tab.database, askConfirm, connType]);
 
   // Ask the server to cancel the in-flight query. The query promise above then
   // rejects with "Query cancelled" and lands in setTabError — nothing is committed.
   const stopQuery = useCallback(async () => {
-    const queryId = queryIdRef.current;
-    if (!queryId) return;
-    try {
-      await api.cancelQuery(queryId);
-    } catch {
-      // Query may have just finished; ignore.
-    }
+    await cancelTabQuery(tabIdRef.current);
   }, []);
 
   const formatQuery = useCallback(() => {

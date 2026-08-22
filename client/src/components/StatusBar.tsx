@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { useStore } from '../store';
+import { QueryResult, useStore } from '../store';
 import { copyResult, exportCsv, exportXlsx } from '../resultExport';
+import { formatDuration } from '../formatDuration';
+import { ElapsedTime } from './ElapsedTime';
 
 /**
  * The window's bottom chrome — the only in-app home for the vault and settings controls
@@ -19,11 +21,15 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
   const activeTabId = useStore((s) => s.activeTabId);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
 
-  const { openSettings, setTabViewMode } = useStore.getState();
+  const { openSettings, setTabViewMode, setTabResultView } = useStore.getState();
 
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
   const result = activeTab && !activeTab.isRunning ? activeTab.result : null;
+  const resultView = activeTab?.resultView ?? 'results';
+  // Only a result set can be shown in the grid, copied or exported. A statement that
+  // returned none (UPDATE, CREATE INDEX) has columns: [] and belongs to Messages alone.
+  const hasResultSet = !!result && result.columns.length > 0;
 
   async function onCopy() {
     if (!result) return;
@@ -58,6 +64,16 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
 
       <div className="flex-1" />
 
+      {activeTab?.isRunning && activeTab.runStartedAt != null && (
+        <span className="flex items-center gap-1.5 text-[11px] text-text-muted flex-shrink-0">
+          <SpinnerIcon className="w-[13px] h-[13px] flex-shrink-0 animate-spin text-accent" />
+          Running…
+          <span className="font-mono text-text">
+            <ElapsedTime startedAt={activeTab.runStartedAt} />
+          </span>
+        </span>
+      )}
+
       {result && (
         <>
           {result.truncated && (
@@ -67,13 +83,45 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
           )}
 
           <span className="text-[11px] font-mono text-text-dim flex-shrink-0">
-            {result.rowCount} rows · {result.executionTime}ms
+            {summarize(result)}
           </span>
 
           <span className="w-px h-3 bg-surface-2 flex-shrink-0" />
 
+          {/* Results and Messages are always both reachable: a batch can fill one, the other,
+              or both, and only the user knows which half they came for. */}
+          {activeTab && (
+            <>
+              <div className="flex items-center gap-0.5 flex-shrink-0">
+                {(['results', 'messages'] as const).map((view) => (
+                  <button
+                    key={view}
+                    className={`${BAR_BUTTON} ${
+                      resultView === view
+                        ? 'bg-accent/20 text-accent hover:bg-accent/20 hover:text-accent'
+                        : ''
+                    }`}
+                    onClick={() => setTabResultView(activeTab.id, view)}
+                    aria-pressed={resultView === view}
+                  >
+                    {view === 'results' ? 'Results' : 'Messages'}
+                    {/* Something happened that the grid can't show — say so rather than
+                        making the user go looking for it. */}
+                    {view === 'messages' &&
+                      resultView === 'results' &&
+                      result.rowsAffected != null && (
+                        <span className="w-1 h-1 rounded-full bg-accent flex-shrink-0" />
+                      )}
+                  </button>
+                ))}
+              </div>
+
+              <span className="w-px h-3 bg-surface-2 flex-shrink-0" />
+            </>
+          )}
+
           {/* Only document drivers (MongoDB) return documents, so only they get the choice. */}
-          {result.documents && activeTab && (
+          {resultView === 'results' && result.documents && activeTab && (
             <>
               <div className="flex items-center gap-0.5 flex-shrink-0">
                 {(['table', 'documents'] as const).map((mode) => (
@@ -96,32 +144,40 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
             </>
           )}
 
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <button
-              className={`${BAR_BUTTON} ${copyStatus === 'error' ? 'text-error' : ''}`}
-              onClick={() => void onCopy()}
-              title="Copy the result as a table"
-            >
-              <CopyIcon className="w-[13px] h-[13px] flex-shrink-0" />
-              {copyStatus === 'copied' ? 'Copied!' : copyStatus === 'error' ? 'Copy failed' : 'Copy'}
-            </button>
-            <button
-              className={BAR_BUTTON}
-              onClick={() => exportCsv(result)}
-              title="Export the result as CSV"
-            >
-              <DownloadIcon className="w-[13px] h-[13px] flex-shrink-0" />
-              CSV
-            </button>
-            <button
-              className={BAR_BUTTON}
-              onClick={() => exportXlsx(result)}
-              title="Export the result as an Excel workbook"
-            >
-              <DownloadIcon className="w-[13px] h-[13px] flex-shrink-0" />
-              Excel
-            </button>
-          </div>
+          {/* A result with no rows has nothing to carry anywhere — these would write an
+              empty file. */}
+          {hasResultSet && (
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                className={`${BAR_BUTTON} ${copyStatus === 'error' ? 'text-error' : ''}`}
+                onClick={() => void onCopy()}
+                title="Copy the result as a table"
+              >
+                <CopyIcon className="w-[13px] h-[13px] flex-shrink-0" />
+                {copyStatus === 'copied'
+                  ? 'Copied!'
+                  : copyStatus === 'error'
+                    ? 'Copy failed'
+                    : 'Copy'}
+              </button>
+              <button
+                className={BAR_BUTTON}
+                onClick={() => exportCsv(result)}
+                title="Export the result as CSV"
+              >
+                <DownloadIcon className="w-[13px] h-[13px] flex-shrink-0" />
+                CSV
+              </button>
+              <button
+                className={BAR_BUTTON}
+                onClick={() => exportXlsx(result)}
+                title="Export the result as an Excel workbook"
+              >
+                <DownloadIcon className="w-[13px] h-[13px] flex-shrink-0" />
+                Excel
+              </button>
+            </div>
+          )}
         </>
       )}
 
@@ -140,12 +196,45 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
 }
 
 /**
+ * The one-line verdict on a finished run.
+ *
+ * "rows" and "rows affected" are different facts that used to print as the same one: an
+ * UPDATE read "5 rows" above an empty grid on PostgreSQL, and "0 rows" on SQL Server.
+ */
+function summarize(result: QueryResult): string {
+  const time = formatDuration(result.executionTime);
+  if (result.columns.length > 0) return `${result.rowCount} rows · ${time}`;
+  if (result.rowsAffected != null) {
+    const rows = result.rowsAffected === 1 ? 'row' : 'rows';
+    return `${result.rowsAffected} ${rows} affected · ${time}`;
+  }
+  return `Completed · ${time}`;
+}
+
+/**
  * Tabler outline glyphs, inlined.
  *
  * The design system specifies Tabler, but the prototype loads it from a CDN — which the
  * packaged app cannot reach. Two icons is far less weight than a font dependency, and
  * `currentColor` keeps them in step with the hover transition.
  */
+
+function SpinnerIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 3a9 9 0 1 0 9 9" />
+    </svg>
+  );
+}
 
 function LockOpenIcon({ className }: { className?: string }) {
   return (

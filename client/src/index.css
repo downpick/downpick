@@ -96,3 +96,16 @@ html, body, #root {
 .results-table tr:hover td {
   background: rgba(201, 162, 39, 0.05);
 }
+
+/* The running-query panel.
+   Held back for a beat before it appears: a query that finishes in under ~150ms would
+   otherwise flash a spinner between the old result and the new one. The pane is already
+   empty by then — only the spinner, the timer and Cancel wait. */
+.run-panel {
+  animation: run-panel-in 120ms ease-out 150ms both;
+}
+
+@keyframes run-panel-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

@@ -1,6 +1,7 @@
 import { Pool, PoolClient, QueryResult as PgQueryResult } from 'pg';
 import { ConnectionConfigWithPassword } from '../connections';
-import { Driver, QueryResult, SchemaTree, SchemaNode, TableNode } from './types';
+import { Driver, QueryResult, SchemaTree, SchemaNode, StatementSummary, TableNode } from './types';
+import { totalRowsAffected } from './statements';
 
 // PostgreSQL built-in type OIDs → human-readable names.
 // Covers the types commonly seen in query results; unknown OIDs fall back to "oid:<n>".
@@ -68,10 +69,11 @@ export class PostgresDriver implements Driver {
       // the last result that actually produced columns (the last SELECT/RETURNING),
       // falling back to the final statement so DDL/DML-only batches still report a
       // result. This mirrors how SSMS/DBeaver surface the last grid.
-      const result: PgQueryResult = Array.isArray(queryResult)
-        ? (queryResult as PgQueryResult[]).filter((r) => r.fields && r.fields.length > 0).pop() ??
-          queryResult[queryResult.length - 1]
-        : queryResult;
+      const all: PgQueryResult[] = Array.isArray(queryResult)
+        ? (queryResult as PgQueryResult[])
+        : [queryResult];
+      const result: PgQueryResult =
+        all.filter((r) => r.fields && r.fields.length > 0).pop() ?? all[all.length - 1];
       const columns = result.fields ? result.fields.map((f) => f.name) : [];
       const columnTypes = result.fields
         ? result.fields.map((f) => PG_TYPE[f.dataTypeID] ?? `oid:${f.dataTypeID}`)
@@ -79,11 +81,25 @@ export class PostgresDriver implements Driver {
       const rows: unknown[][] = (result.rows ?? []).map((row: unknown[]) =>
         row.map((val) => (val instanceof Date ? val.toISOString() : val))
       );
+      // Every statement in the batch reports, not just the one the grid ends up showing:
+      // `command` is the verb pg echoes back ('UPDATE', 'CREATE', ...), and for anything
+      // but a SELECT its rowCount is the number of rows the statement changed. DDL reports
+      // no count at all (rowCount null), which reads as "completed successfully".
+      const statements: StatementSummary[] = all.map((r) => ({
+        command: r.command,
+        rowsAffected: r.command !== 'SELECT' ? (r.rowCount ?? undefined) : undefined,
+        rowCount: r.fields && r.fields.length > 0 ? (r.rows?.length ?? 0) : undefined,
+      }));
+
       return {
         columns,
         columnTypes,
         rows,
-        rowCount: result.rowCount ?? rows.length,
+        // Rows returned — the affected count now has its own field instead of riding here,
+        // where an UPDATE's count was indistinguishable from a SELECT's row count.
+        rowCount: rows.length,
+        rowsAffected: totalRowsAffected(statements),
+        statements,
         executionTime,
       };
     } catch (err) {

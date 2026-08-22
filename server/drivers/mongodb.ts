@@ -15,6 +15,7 @@ import {
 } from 'mongodb';
 import { ConnectionConfigWithPassword } from '../connections';
 import { ColumnNode, Driver, QueryResult, SchemaTree, SchemaNode, TableNode } from './types';
+import { mongoSummary } from './statements';
 import { parseShellQuery, ParsedCall } from './mongoShellParser';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -378,10 +379,15 @@ export class MongoDriver implements Driver {
     const documents = rawDocs.map((d) => sanitizeValue(d)) as Record<string, unknown>[];
     const { columns, rows } = flattenDocuments(documents);
 
+    // calls[0] is the operation; anything after it is cursor chaining (.sort(), .limit()).
+    const statement = mongoSummary(calls[0].method, documents);
+
     return {
       columns,
       rows,
       rowCount: documents.length,
+      rowsAffected: statement.rowsAffected,
+      statements: [statement],
       executionTime,
       documents,
     };

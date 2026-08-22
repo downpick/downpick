@@ -385,9 +385,13 @@ export default function App() {
                 {/* Results pane */}
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <ResultsGrid
+                    tabId={tab.id}
                     result={tab.result}
                     error={tab.error}
                     viewMode={tab.viewMode ?? 'table'}
+                    resultView={tab.resultView ?? 'results'}
+                    isRunning={tab.isRunning}
+                    runStartedAt={tab.runStartedAt}
                   />
                 </div>
               </div>

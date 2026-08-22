@@ -1,6 +1,7 @@
 import * as sql from 'mssql';
 import { ConnectionConfigWithPassword } from '../connections';
-import { Driver, QueryResult, SchemaTree, DatabaseNode, SchemaNode, TableNode, ColumnNode } from './types';
+import { Driver, QueryResult, SchemaTree, DatabaseNode, SchemaNode, StatementSummary, TableNode, ColumnNode } from './types';
+import { totalRowsAffected } from './statements';
 
 export class SqlServerDriver implements Driver {
   private pool: sql.ConnectionPool | null = null;
@@ -102,11 +103,20 @@ export class SqlServerDriver implements Driver {
       row.map((val) => (val instanceof Date ? val.toISOString() : val))
     );
 
+    // mssql reports one entry per statement that produced a count, in statement order, but
+    // never the verb that produced it — which is why these lines read as a bare
+    // "(N rows affected)", exactly as SSMS prints them.
+    const statements: StatementSummary[] = (result.rowsAffected ?? []).map((n) => ({
+      rowsAffected: n,
+    }));
+
     return {
       columns,
       columnTypes,
       rows,
       rowCount: rows.length,
+      rowsAffected: totalRowsAffected(statements),
+      statements,
       executionTime,
     };
   }
