@@ -74,12 +74,18 @@ Both come out of the same container. The named volumes are the important part: t
 native binaries with Linux builds of the same packages.
 
 ```bash
-docker run --rm --platform linux/amd64 -v "$PWD":/project -v downpick-node-modules:/project/node_modules -v downpick-client-node-modules:/project/client/node_modules electronuserland/builder /bin/bash -c "npm install --no-audit --no-fund && npm run build && npx electron-builder --linux --win zip"
+docker run --rm --platform linux/amd64 -v "$PWD":/project -v downpick-node-modules:/project/node_modules -v downpick-client-node-modules:/project/client/node_modules electronuserland/builder /bin/bash -c "npm install --no-audit --no-fund && (cd client && npm install --no-audit --no-fund) && npm run build && npx electron-builder --linux --win zip"
 ```
 
+Both installs are required. The two volumes are separate and each starts out empty, so the root
+`npm install` populates only `/project/node_modules` — the client's stays empty until its own
+install runs, and `npm run build` then dies in `copy-monaco` with
+`ENOENT: no such file or directory, lstat 'node_modules/monaco-editor/min/vs'`.
+
 First run pulls the image (several GB) and populates the volumes; later runs reuse both and are much
-faster. Once the volumes exist and dependencies haven't changed, `npm install --no-audit --no-fund &&`
-can be dropped from the command.
+faster. Once the volumes exist and dependencies haven't changed, both install steps
+(`npm install --no-audit --no-fund && (cd client && npm install --no-audit --no-fund) &&`) can be
+dropped from the command.
 
 This yields `Downpick-$VERSION.AppImage`, `Downpick-$VERSION-win.zip`, and `latest-linux.yml`.
 
