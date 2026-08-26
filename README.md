@@ -18,12 +18,15 @@ Download the latest build from the [releases page](https://github.com/downpick/d
 | **Windows** (x64) | `Downpick-<version>-win.zip` | Extract anywhere, run `Downpick.exe` |
 
 **The builds are unsigned**, so both desktop platforms will warn you on first launch. On macOS,
-Gatekeeper refuses the app outright — right-click it and choose **Open**, or clear the quarantine
-flag:
+Gatekeeper says it can't verify the developer. Open it once from **System Settings → Privacy &
+Security → Open Anyway**, or clear the quarantine flag yourself:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Downpick.app
 ```
+
+Either way you only do it once. If macOS instead claims the app is **damaged**, you have a build
+from before 1.0.1 — that message was a packaging bug, not a bad download; grab a newer release.
 
 On Windows, SmartScreen shows a blue banner — choose **More info → Run anyway**. Verify what you
 downloaded against the SHA-256 checksums published in the release notes.

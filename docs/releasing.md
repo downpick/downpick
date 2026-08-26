@@ -56,6 +56,17 @@ npm run dist:mac
 Produces four artifacts in `release/` — dmg and zip, each for arm64 and x64 — plus `.blockmap`
 files and `latest-mac.yml`.
 
+Each bundle is ad-hoc signed by the `afterPack` hook (`scripts/adhoc-sign-mac.js`) — see
+[Constraints](#constraints) for why. The hook verifies its own work and fails the build if the
+signature doesn't hold, but it costs nothing to confirm on the packaged output:
+
+```bash
+codesign --verify --deep --strict release/mac-arm64/Downpick.app && codesign --verify --deep --strict release/mac/Downpick.app
+```
+
+Both must print nothing and exit 0. Any output here means the artifact will be reported as
+damaged on a downloader's machine — do not ship it.
+
 ## 4. Build Linux and Windows
 
 Both come out of the same container. The named volumes are the important part: they keep a Linux
@@ -135,16 +146,43 @@ Worth including every time:
 
 - **Which download is which.** Apple Silicon vs. Intel dmg, AppImage for Linux (`chmod +x` first),
   zip for Windows (extract, run `Downpick.exe`).
-- **The unsigned warning.** Gatekeeper blocks first launch — right-click → **Open**, or
-  `xattr -dr com.apple.quarantine /Applications/Downpick.app`. Windows SmartScreen needs
-  **More info → Run anyway**.
+- **The unsigned warning.** Gatekeeper blocks first launch with "Apple could not verify
+  Downpick is free of malware". The reliable bypass is **System Settings → Privacy & Security →
+  Open Anyway**, or `xattr -dr com.apple.quarantine /Applications/Downpick.app`. Right-click →
+  **Open** still works on some versions but was tightened in macOS 15, so lead with Open Anyway.
+  Windows SmartScreen needs **More info → Run anyway**.
 - **SHA-256 checksums**, from step 5.
 
 ## Constraints
 
-**Builds are unsigned.** `identity: null` in `electron-builder.yml` skips macOS signing. To ship
-signed builds, set `CSC_LINK` and `CSC_KEY_PASSWORD`, plus `APPLE_ID`,
-`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID` for notarization, and remove that line.
+**Builds are ad-hoc signed, not Developer ID signed.** `identity: null` in `electron-builder.yml`
+skips macOS signing, and skipping it entirely is not a neutral choice: packaging renames the bundle
+and rewrites `Info.plist` and `Resources`, which invalidates the linker-signed ad-hoc signature
+Electron ships with. The result verifies as *broken* rather than merely unsigned —
+
+```
+code has no resources but signature indicates they must be present
+```
+
+— and Gatekeeper reports a downloaded copy as **"Downpick is damaged and can't be opened. You
+should move it to the Trash."** That wording has nothing to do with a corrupt download, and
+right-click → **Open** does not clear it, because that path only bypasses an *unverified* app,
+never a *malformed* one. Users hit a dead end.
+
+`scripts/adhoc-sign-mac.js` runs as an `afterPack` hook and re-signs each bundle with
+`codesign --sign -`, giving it a valid self-consistent signature under the app's own identifier.
+First launch still needs **Open Anyway** — ad-hoc is not a trusted identity — but the app is no
+longer reported as damaged. The hook is a no-op on Windows and Linux, and skips itself when
+`CSC_LINK`/`CSC_NAME` is set, since electron-builder signs properly right after it.
+
+To ship genuinely signed builds, set `CSC_LINK` and `CSC_KEY_PASSWORD`, plus `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID` for notarization, and remove the `identity`
+line. That requires a paid Apple Developer account and is the only way to get a first launch with
+no warning at all.
+
+One caveat if the build config ever grows an `electronFuses` section: electron-builder flips fuses
+*after* `afterPack` and before its own signing step, which would invalidate the ad-hoc signature
+again. The ad-hoc pass would have to move after the fuse flip.
 
 **No Windows installer on Apple Silicon.** The `nsis` and `portable` targets need Wine to generate
 the uninstaller, and Wine aborts under QEMU emulation on an ARM host — an `anon_mmap_fixed`
