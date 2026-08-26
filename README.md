@@ -17,16 +17,19 @@ Download the latest build from the [releases page](https://github.com/downpick/d
 | **Linux** (x64) | `Downpick-<version>.AppImage` | `chmod +x` it, then run it |
 | **Windows** (x64) | `Downpick-<version>-win.zip` | Extract anywhere, run `Downpick.exe` |
 
-**The builds are unsigned**, so both desktop platforms will warn you on first launch. On macOS,
-Gatekeeper says it can't verify the developer. Open it once from **System Settings → Privacy &
-Security → Open Anyway**, or clear the quarantine flag yourself:
+**The builds are unsigned**, so both desktop platforms will warn you on first launch. On macOS you
+get *"Apple could not verify Downpick is free of malware"* — expected, since the build carries no
+Apple-issued certificate. Go to **System Settings → Privacy & Security**, scroll to Security, and
+click **Open Anyway** next to the Downpick line, then launch the app again and choose **Open**.
+Or clear the quarantine flag yourself:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Downpick.app
 ```
 
-Either way you only do it once. If macOS instead claims the app is **damaged**, you have a build
-from before 1.0.1 — that message was a packaging bug, not a bad download; grab a newer release.
+Either way you only do it once. If macOS instead claims the app is **damaged and can't be opened**,
+you have a build from before 1.1.0 — that message was a packaging bug, not a bad download, and
+there is no way past it; grab a newer release.
 
 On Windows, SmartScreen shows a blue banner — choose **More info → Run anyway**. Verify what you
 downloaded against the SHA-256 checksums published in the release notes.
