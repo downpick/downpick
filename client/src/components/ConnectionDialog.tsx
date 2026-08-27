@@ -7,6 +7,8 @@ interface ConnectionFormData {
   type: DbType;
   host: string;
   port: string;
+  /** Oracle only. Kept in the form for every type so `field()` can clear it on a type change. */
+  serviceName: string;
   username: string;
   password: string;
 }
@@ -16,6 +18,7 @@ const defaultForm = (): ConnectionFormData => ({
   type: 'postgres',
   host: 'localhost',
   port: '5432',
+  serviceName: '',
   username: '',
   password: '',
 });
@@ -35,6 +38,7 @@ export function ConnectionDialog({
           type: connection.type,
           host: connection.host,
           port: String(connection.port),
+          serviceName: connection.serviceName ?? '',
           username: connection.username,
           password: '',
         }
@@ -51,6 +55,7 @@ export function ConnectionDialog({
     postgres: '5432',
     sqlserver: '1433',
     mongodb: '27017',
+    oracle: '1521',
   };
 
   function field(key: keyof ConnectionFormData, value: string) {
@@ -60,6 +65,10 @@ export function ConnectionDialog({
       const next = { ...f, [key]: value };
       if (key === 'type') {
         next.port = DEFAULT_PORTS[value as DbType];
+        // Clear the Oracle-only field alongside the port. Without this, a service name typed
+        // under Oracle survives a switch to Postgres and gets persisted on a record that has no
+        // use for it.
+        if (value !== 'oracle') next.serviceName = '';
       }
       return next;
     });
@@ -78,6 +87,7 @@ export function ConnectionDialog({
       const result = await api.testConnection({
         // On edit, let the server fall back to the stored password when the field is blank
         ...(connection ? { id: connection.id } : {}),
+        ...(form.type === 'oracle' ? { serviceName: form.serviceName } : {}),
         type: form.type,
         host: form.host,
         port,
@@ -106,6 +116,12 @@ export function ConnectionDialog({
       );
       return;
     }
+    // Optional on the record because three engines have no use for it, but there is no Oracle
+    // connection without one — it is part of the address, not a preference.
+    if (form.type === 'oracle' && !form.serviceName) {
+      setError('Service name is required for Oracle connections.');
+      return;
+    }
     setSaving(true);
     setError(null);
     const port = parseInt(form.port, 10);
@@ -116,16 +132,20 @@ export function ConnectionDialog({
           type: form.type,
           host: form.host,
           port,
+          serviceName: form.type === 'oracle' ? form.serviceName : undefined,
           username: form.username,
           // Only send a password when the user typed a new one
           ...(form.password ? { password: form.password } : {}),
         });
+        // Built locally rather than refetched, so the field has to be set here too or the tree
+        // holds a record without it until the next listConnections().
         const updated: SavedConnection = {
           id: connection.id,
           name: form.name,
           type: form.type,
           host: form.host,
           port,
+          serviceName: form.type === 'oracle' ? form.serviceName : undefined,
           username: form.username,
         };
         setSavedConnections(
@@ -137,6 +157,7 @@ export function ConnectionDialog({
           type: form.type,
           host: form.host,
           port,
+          serviceName: form.type === 'oracle' ? form.serviceName : undefined,
           username: form.username,
           password: form.password,
         });
@@ -146,6 +167,7 @@ export function ConnectionDialog({
           type: form.type,
           host: form.host,
           port,
+          serviceName: form.type === 'oracle' ? form.serviceName : undefined,
           username: form.username,
         };
         setSavedConnections([...savedConnections, newConn]);
@@ -185,6 +207,7 @@ export function ConnectionDialog({
             >
               <option value="postgres">PostgreSQL</option>
               <option value="sqlserver">SQL Server</option>
+              <option value="oracle">Oracle</option>
               <option value="mongodb">MongoDB</option>
             </select>
           </label>
@@ -209,6 +232,28 @@ export function ConnectionDialog({
               />
             </label>
           </div>
+
+          {/*
+            The only per-type field in this form. Oracle is the one engine that cannot enumerate
+            its databases — the service is part of the address — so it has to be asked for.
+            Deliberately left blank rather than pre-filled with a guess: a wrong service produces
+            ORA-12514, which connectionErrors.ts now explains and points back at this field.
+          */}
+          {form.type === 'oracle' && (
+            <label className="block">
+              <span className="text-xs text-text-muted uppercase tracking-wide">Service Name</span>
+              <input
+                className="input mt-1"
+                placeholder="ORCLPDB1 / XEPDB1 / FREEPDB1"
+                value={form.serviceName}
+                onChange={(e) => field('serviceName', e.target.value)}
+              />
+              <p className="text-xs text-text-dim mt-1">
+                The service the listener serves — not the SID. `lsnrctl status` on the server
+                lists them.
+              </p>
+            </label>
+          )}
 
           <label className="block">
             <span className="text-xs text-text-muted uppercase tracking-wide">

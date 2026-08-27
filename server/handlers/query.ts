@@ -9,7 +9,7 @@ const runningQueries = new Map<string, () => void>();
 // Derives the 1-based line number of a query error from the driver's error metadata.
 // PostgreSQL reports `position` (a 1-based character offset into the submitted SQL);
 // SQL Server reports `lineNumber` (a 1-based line within the batch) directly.
-function errorLine(sql: string, err: unknown): number | undefined {
+export function errorLine(sql: string, err: unknown): number | undefined {
   const e = err as { position?: string | number; lineNumber?: number };
   if (e.position != null) {
     const pos = typeof e.position === 'string' ? parseInt(e.position, 10) : e.position;

@@ -1,4 +1,4 @@
-export type DbType = 'postgres' | 'sqlserver' | 'mongodb';
+export type DbType = 'postgres' | 'sqlserver' | 'mongodb' | 'oracle';
 
 export interface ConnectionConfig {
   id: string;
@@ -8,6 +8,17 @@ export interface ConnectionConfig {
   port: number;
   /** Never persisted — injected at runtime by open-db. */
   database?: string;
+  /**
+   * Oracle only, and the one address field that IS persisted.
+   *
+   * Every other engine discovers its databases from the server (pg_database, sys.databases,
+   * listDatabases), so `database` above can be left out of the record and injected when the
+   * explorer opens a node. Oracle cannot: a service name is part of the address, not something
+   * you enumerate, so it has to survive in the vault. The two hold the same string for an Oracle
+   * connection — getDatabases() returns exactly one entry, the service — which is why the driver
+   * prefers `database` and falls back to this.
+   */
+  serviceName?: string;
   username: string;
 }
 
@@ -29,6 +40,8 @@ export interface StoredConnection {
   type: DbType;
   host: string;
   port: number;
+  /** Oracle only — see the note on ConnectionConfig.serviceName. Undefined for every other type. */
+  serviceName?: string;
   username: string;
   password: string;
 }
