@@ -161,6 +161,7 @@ export interface AiHistoryPage {
 
 export type MenuCommand =
   | 'query:run'
+  | 'query:runStatement'
   | 'query:cancel'
   | 'query:format'
   | 'vault:lock'

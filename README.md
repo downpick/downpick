@@ -56,7 +56,8 @@ To build redistributables yourself, see [docs/releasing.md](docs/releasing.md).
 - Virtualized results grid for large result sets, with MongoDB documents viewable as a flattened
   table or an expandable per-document tree
 - Copy results as a table (pasteable into Slack, Sheets, or Excel) or export to CSV / Excel
-- Run the whole editor, just the selection, or only the statement under the cursor (F9)
+- Run the whole editor, or just the selection — plus **Query ▸ Run Statement** (F9) to run only
+  the statement under the cursor
 - Cancel a running query mid-flight, plus a configurable timeout that cancels it for you
 - Confirmation before any `UPDATE`/`DELETE` with no `WHERE` clause, or `updateMany`/`deleteMany`
   with an empty filter

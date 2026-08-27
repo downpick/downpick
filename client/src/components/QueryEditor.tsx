@@ -15,7 +15,9 @@ interface QueryEditorProps {
 
 /**
  * Which splitter grammar a connection's SQL follows. MongoDB has none — its shell syntax is not
- * SQL — which is why Run Statement is hidden for it rather than given a fallback.
+ * SQL — so Run Statement is a no-op there rather than guessing at a dialect. The menu item stays
+ * enabled because the menu is built once in the main process and knows nothing about which tab
+ * is in front; a Mongo tab simply ignores F9.
  */
 function dialectFor(connType: string | undefined): SqlDialect | null {
   if (connType === 'oracle') return 'oracle';
@@ -302,19 +304,6 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
   }, []);
 
-  // F9 runs just the statement under the caret — SQL Developer's binding for it, and the same
-  // window-level/activeTabId pattern F5 uses above.
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'F9' || e.ctrlKey || e.shiftKey || e.altKey) return;
-      if (useStore.getState().activeTabId !== tabIdRef.current) return;
-      e.preventDefault();
-      runStatementRef.current();
-    }
-    window.addEventListener('keydown', onKeyDown, { capture: true });
-    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
-  }, []);
-
   // The application menu drives the same actions as the toolbar buttons. Every mounted tab
   // editor subscribes, and the activeTabId guard — the same one F5 uses above — keeps
   // exactly one of them from acting.
@@ -322,6 +311,7 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     return window.downpick.onMenuCommand((command) => {
       if (useStore.getState().activeTabId !== tabIdRef.current) return;
       if (command === 'query:run') runQueryRef.current();
+      else if (command === 'query:runStatement') runStatementRef.current();
       else if (command === 'query:cancel') stopQueryRef.current();
       else if (command === 'query:format') formatQueryRef.current();
     });
@@ -389,7 +379,8 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     if (useStore.getState().tabs.find((t) => t.id === tab.id)?.isRunning) return;
 
     // Use the selected text when a non-empty selection exists; otherwise run everything.
-    // Unchanged behaviour — Run Statement below is the new affordance, this one is muscle memory.
+    // Unchanged behaviour, deliberately: this is muscle memory. Run Statement (Query menu, F9)
+    // is the new affordance and is kept entirely separate from it.
     const selection = selectionRef.current;
     const useSelection = selection !== null && !selection.isEmpty();
     const sql = useSelection
@@ -400,7 +391,9 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
   }, [tab.id, runSql]);
 
   /**
-   * Runs only the statement the caret is in — F9, the affordance every Oracle client has.
+   * Runs only the statement the caret is in — Query ▸ Run Statement (F9), the affordance every
+   * Oracle client has. Reached only through the menu command; there is no toolbar button, so it
+   * never competes with Run for space or meaning.
    *
    * Selecting the resolved range before running is deliberate: it is how the user sees what the
    * splitter thinks a statement is, so a misdetection is visible rather than mysterious.
@@ -875,17 +868,6 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
             title="Format SQL (Shift+Alt+F)"
           >
             ⌥ Format
-          </button>
-        )}
-        {/* Hidden for MongoDB, whose shell syntax the SQL splitter has no grammar for. */}
-        {!isRunning && dialectFor(connType) && (
-          <button
-            className="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-hover disabled:opacity-50 flex-shrink-0 whitespace-nowrap"
-            onClick={runStatement}
-            disabled={!isConnected}
-            title="Run only the statement under the cursor (F9)"
-          >
-            ▷ Run Statement
           </button>
         )}
         {isRunning ? (
