@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { aiChatStream, api, AiHistoryEntry, AiHistoryMessage } from '../api';
 import { AiMessage, emptyAiChat, Tab, useStore } from '../store';
 import { AiHistoryList } from './AiHistoryList';
+import { IS_MAC } from '../platform';
 
 /** Starter prompts, mirroring the design's chip row. */
 const SQL_CHIPS = [
@@ -445,8 +446,12 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
     >
       {/* Header */}
       <div className="flex items-center gap-2 p-3 border-b border-surface-2 flex-shrink-0">
-        <Sparkle className="w-4 h-4 text-accent flex-shrink-0" />
-        <div className="flex-1 min-w-0">
+        {/* The panel is flush with the top of the window, so on macOS this header sits in
+            the band the hidden titlebar left behind. The inert half of it drags the window,
+            the way the empty part of the tab strip does; the buttons below stay clickable
+            because they are outside these two elements. */}
+        <Sparkle className={`w-4 h-4 text-accent flex-shrink-0 ${IS_MAC ? 'drag-region' : ''}`} />
+        <div className={`flex-1 min-w-0 ${IS_MAC ? 'drag-region' : ''}`}>
           <p className="text-xs font-semibold text-text m-0">Ask AI</p>
           <p className="text-[11px] text-text-dim m-0">Reads your schema · never runs queries</p>
         </div>
