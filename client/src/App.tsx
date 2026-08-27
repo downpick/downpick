@@ -10,10 +10,7 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { AiPanel } from './components/AiPanel';
 import { StatusBar } from './components/StatusBar';
 import Logo from './components/Logo';
-
-// The window is frameless-ish on macOS (`titleBarStyle: 'hiddenInset'`), so the traffic
-// lights float over the renderer and need a drag strip reserved for them. Nowhere else.
-const IS_MAC = navigator.userAgent.includes('Mac');
+import { IS_MAC } from './platform';
 
 const MIN_EDITOR_HEIGHT = 100;
 const MIN_SIDEBAR_WIDTH = 160;
@@ -352,10 +349,18 @@ export default function App() {
               </div>
             ))}
             {tabs.length === 0 && (
-              <div className="px-4 py-2 text-xs text-text-dim">
+              // Nothing to click here, so it drags too — otherwise the hint would punch a
+              // dead spot into the middle of the strip's only draggable state.
+              <div className={`px-4 py-2 text-xs text-text-dim ${IS_MAC ? 'drag-region' : ''}`}>
                 No open tabs — open a database from the explorer
               </div>
             )}
+
+            {/* The leftover strip to the right of the last tab drags the window, the way
+                the empty part of Firefox's tab bar does. The tabs themselves stay out of
+                the drag region, so clicking one still selects it — and `flex-basis: 0`
+                collapses this away once the tabs overflow and scroll. */}
+            {IS_MAC && <div className="flex-1 self-stretch drag-region" />}
           </div>
 
           {/* Editor + Results
