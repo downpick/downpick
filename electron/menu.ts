@@ -118,6 +118,15 @@ export function buildMenu(isDev: boolean): void {
         click: () => send('query:run'),
       },
       {
+        label: 'Run Statement',
+        // Unlike Run Query above, F9 IS claimed here. Run Query needs its renderer-side F5
+        // listener because the menu already spends its accelerator slot on CmdOrCtrl+Return;
+        // this item has only one binding to give, so letting the menu own it means the shortcut
+        // shows up next to the label — which is the whole point of putting it here.
+        accelerator: 'F9',
+        click: () => send('query:runStatement'),
+      },
+      {
         label: 'Cancel Query',
         accelerator: 'CmdOrCtrl+Shift+Return',
         click: () => send('query:cancel'),

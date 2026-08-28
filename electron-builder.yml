@@ -9,7 +9,7 @@ directories:
 
 # Only the compiled main process, the built renderer, and the manifest. The TypeScript
 # sources, the client's own node_modules, and the Monaco staging copy are all excluded;
-# node_modules for pg/mssql/mongodb is pulled in automatically from "dependencies".
+# node_modules for pg/mssql/mongodb/oracledb is pulled in automatically from "dependencies".
 files:
   - .electron-out/**/*
   - client/dist/**/*
@@ -19,6 +19,11 @@ files:
   - build/icon.png
   - '!**/*.map'
   - '!.electron-out/**/*.test.js'
+  # oracledb ships ~2.4 MB of prebuilt Thick-mode binaries for four platforms. The driver runs
+  # in Thin mode (pure JavaScript) and never calls initOracleClient(), which is the only thing
+  # that loads them — so none is ever dlopen'd and none needs to ship. Dropping them is also
+  # what keeps `asar: true` viable and avoids any per-arch native handling.
+  - '!**/node_modules/oracledb/build/**'
 
 asar: true
 
@@ -50,7 +55,7 @@ nsis:
 
 linux:
   category: Development
-  synopsis: Standalone database manager for PostgreSQL, SQL Server, and MongoDB
+  synopsis: Standalone database manager for PostgreSQL, SQL Server, Oracle, and MongoDB
   # AppImage only. The deb target additionally requires a maintainer email, which means
   # putting a real address in package.json's "author" — deliberately not done.
   target:

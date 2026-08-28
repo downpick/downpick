@@ -57,6 +57,7 @@ function errorContext(
     host: connection.host,
     port: connection.port,
     username: connection.username,
+    serviceName: connection.serviceName,
     ...extra,
   };
 }
@@ -66,6 +67,8 @@ interface ConnectionInput {
   type: DbType;
   host: string;
   port: number;
+  /** Oracle only. Optional, so TypeScript will NOT flag a handler that forgets to pass it on. */
+  serviceName?: string;
   username: string;
   password?: string;
 }
@@ -75,8 +78,16 @@ export function registerConnectionHandlers(): void {
   registerHandler('connections:list', () => loadConnections());
 
   registerHandler('connections:create', async (body: ConnectionInput) => {
-    const { name, type, host, port, username, password } = body;
-    const id = await addConnection({ name, type, host, port, username, password: password ?? '' });
+    const { name, type, host, port, serviceName, username, password } = body;
+    const id = await addConnection({
+      name,
+      type,
+      host,
+      port,
+      serviceName,
+      username,
+      password: password ?? '',
+    });
     return { id };
   });
 
@@ -86,7 +97,7 @@ export function registerConnectionHandlers(): void {
   registerHandler(
     'connections:test',
     async (body: ConnectionInput & { id?: string }) => {
-      const { id, type, host, port, username, password } = body ?? {};
+      const { id, type, host, port, serviceName, username, password } = body ?? {};
       if (!type || !host || !Number.isFinite(port)) {
         throw new AppError(400, 'Type, host, and port are required.');
       }
@@ -94,12 +105,17 @@ export function registerConnectionHandlers(): void {
       // Editing an existing connection with the password box left blank means "keep the
       // stored password" — test against that one rather than an empty string.
       const effectivePassword = password || (id ? loadPassword(id) : '');
+      // Same "fall back to what was saved" rule as the password above: testing an existing
+      // Oracle connection from the edit dialog must use its stored service name rather than
+      // connect to a service of undefined.
+      const effectiveServiceName = serviceName || (id ? findConnection(id)?.serviceName : undefined);
       const config: ConnectionConfigWithPassword = {
         id: id ?? 'test',
         name: 'test',
         type,
         host,
         port,
+        serviceName: effectiveServiceName,
         username: username ?? '',
         password: effectivePassword,
       };
@@ -113,7 +129,16 @@ export function registerConnectionHandlers(): void {
       } catch (err: unknown) {
         // A failed test is an expected outcome, not a transport error — report it as a
         // successful call with `ok: false` so the dialog can render it inline.
-        return { ok: false, error: describeConnectionError(err, { type, host, port, username }) };
+        return {
+          ok: false,
+          error: describeConnectionError(err, {
+            type,
+            host,
+            port,
+            username,
+            serviceName: effectiveServiceName,
+          }),
+        };
       } finally {
         await driver?.close().catch(() => {});
       }
@@ -121,9 +146,13 @@ export function registerConnectionHandlers(): void {
   );
 
   registerHandler('connections:update', async (body: ConnectionInput & { id: string }) => {
-    const { id, name, type, host, port, username, password } = body;
+    const { id, name, type, host, port, serviceName, username, password } = body;
     // An absent password means "keep the stored one" — the façade handles that.
-    const updated = await updateConnection(id, { name, type, host, port, username }, password);
+    const updated = await updateConnection(
+      id,
+      { name, type, host, port, serviceName, username },
+      password,
+    );
     if (!updated) throw new AppError(404, 'Connection not found');
     // Config changed — close any open drivers so the next connect uses fresh settings.
     await closeConnectionDrivers(id);

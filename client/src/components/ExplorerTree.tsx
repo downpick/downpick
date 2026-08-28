@@ -33,6 +33,7 @@ const rowKey = (...parts: string[]) => parts.join(SEP);
 const CONN_ICON: Record<DbType, IconName> = {
   postgres: 'server',
   sqlserver: 'server',
+  oracle: 'server',
   mongodb: 'brand-mongodb',
 };
 
@@ -41,6 +42,7 @@ const CONN_ICON: Record<DbType, IconName> = {
 const TYPE_LABEL: Record<DbType, string> = {
   postgres: 'PostgreSQL',
   sqlserver: 'SQL Server',
+  oracle: 'Oracle',
   mongodb: 'MongoDB',
 };
 
@@ -317,7 +319,9 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
       ? `db.${table}.find().limit(100)`
       : type === 'sqlserver'
         ? `SELECT TOP 100 *\nFROM [${schema}].[${table}];`
-        : `SELECT *\nFROM "${schema}"."${table}"\nLIMIT 100;`;
+        : type === 'oracle'
+          ? `SELECT *\nFROM "${schema}"."${table}"\nFETCH FIRST 100 ROWS ONLY;`
+          : `SELECT *\nFROM "${schema}"."${table}"\nLIMIT 100;`;
   }
 
   function openTableQuery(row: Row) {

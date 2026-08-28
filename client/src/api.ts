@@ -10,6 +10,7 @@ import type {
   SaveFileRequest,
   StoredAiHistoryMessage,
 } from '../../server/channels';
+import type { DbType } from './store';
 
 /**
  * Every call the UI makes goes through the preload bridge to the main process.
@@ -154,17 +155,20 @@ export const api = {
   listConnections: () => invoke<import('./store').SavedConnection[]>('connections:list'),
   createConnection: (body: {
     name: string;
-    type: 'postgres' | 'sqlserver' | 'mongodb';
+    type: DbType;
     host: string;
     port: number;
+    /** Oracle only; ignored by every other engine. */
+    serviceName?: string;
     username: string;
     password: string;
   }) => invoke<{ id: string }>('connections:create', body),
   updateConnection: (id: string, body: {
     name: string;
-    type: 'postgres' | 'sqlserver' | 'mongodb';
+    type: DbType;
     host: string;
     port: number;
+    serviceName?: string;
     username: string;
     password?: string;
   }) => invoke<{ ok: boolean }>('connections:update', { id, ...body }),
@@ -173,9 +177,11 @@ export const api = {
     // Present when testing an existing profile — lets the main process fall back to the
     // stored password if the user left the field blank.
     id?: string;
-    type: 'postgres' | 'sqlserver' | 'mongodb';
+    type: DbType;
     host: string;
     port: number;
+    // Same fallback rule as the password: blank on an existing profile means "use the stored one".
+    serviceName?: string;
     username: string;
     password?: string;
   }) => invoke<TestConnectionResult>('connections:test', body),

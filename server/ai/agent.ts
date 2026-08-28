@@ -55,6 +55,15 @@ const DIALECT_GUIDANCE: Record<DbType, string> = {
     'Quote identifiers with square brackets ([dbo].[Orders]).',
     'Use TOP (n) rather than LIMIT, and OFFSET/FETCH for paging.',
   ].join(' '),
+  oracle: [
+    'The database is Oracle. Write Oracle SQL.',
+    // The three things a model reliably gets wrong on Oracle, in the order it gets them wrong.
+    'Every SELECT needs a FROM clause — use FROM dual for an expression with no table.',
+    'Use FETCH FIRST n ROWS ONLY for paging, never LIMIT.',
+    'Unquoted identifiers fold to UPPER CASE, so the names the tools return are already upper',
+    'case; quote with double quotes ("HR"."EMPLOYEES") only when a name needs its case preserved.',
+    'Write a single statement with no trailing semicolon.',
+  ].join(' '),
   mongodb: [
     'The database is MongoDB. Do not write SQL.',
     'Write a single MongoDB shell expression of the form db.<collection>.<method>(...),',

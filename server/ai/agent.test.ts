@@ -143,11 +143,22 @@ test('tells the model when a table does not exist instead of inventing one', asy
 });
 
 test('offers a schema tool to relational engines and withholds it from document stores', async () => {
-  const relational = createSchemaToolset(stubDriver(), 'postgres', 'analytics');
-  assert.deepEqual(
-    relational.specs.map((s) => s.name),
-    ['list_schemas', 'list_tables', 'describe_tables'],
-  );
+  // Every relational engine gets the same toolset — the branch in tools.ts is
+  // document-vs-relational, not per-engine, so a new SQL engine must land on this side of it
+  // without any change there. Oracle is asserted alongside postgres for exactly that reason.
+  for (const engine of ['postgres', 'sqlserver', 'oracle'] as const) {
+    const relational = createSchemaToolset(stubDriver(), engine, 'analytics');
+    assert.deepEqual(
+      relational.specs.map((s) => s.name),
+      ['list_schemas', 'list_tables', 'describe_tables'],
+      `${engine} should get the relational toolset`,
+    );
+    for (const spec of relational.specs) {
+      const properties = spec.parameters.properties as Record<string, unknown>;
+      if (spec.name === 'list_schemas') continue;
+      assert.equal('schema' in properties, true, `${engine}/${spec.name} lost its schema argument`);
+    }
+  }
 
   // MongoDB's "collections" node is a synthetic placeholder, not a real schema layer.
   // Offering it cost two round-trips per question and taught the model nothing.

@@ -1,6 +1,6 @@
 # Downpick
 
-A desktop database manager for PostgreSQL, SQL Server, and MongoDB, with an encrypted credential
+A desktop database manager for PostgreSQL, SQL Server, Oracle, and MongoDB, with an encrypted credential
 vault and an AI assistant that writes queries from your schema. Runs as a native app on Windows,
 macOS, and Linux.
 
@@ -47,8 +47,8 @@ To build redistributables yourself, see [docs/releasing.md](docs/releasing.md).
 
 ## Features
 
-- Connect to multiple PostgreSQL, SQL Server, and MongoDB databases at once, with a schema
-  explorer down to columns (or collections, on MongoDB)
+- Connect to multiple PostgreSQL, SQL Server, Oracle, and MongoDB databases at once, with a
+  schema explorer down to columns (or collections, on MongoDB)
 - Monaco editor with syntax highlighting and autocomplete for both SQL and MongoDB shell-style
   queries — `db.users.find({...}).sort({...}).limit(20)` runs as written
 - **Ask AI**: describe what you want in plain language and an LLM reads your schema and writes the
@@ -56,6 +56,8 @@ To build redistributables yourself, see [docs/releasing.md](docs/releasing.md).
 - Virtualized results grid for large result sets, with MongoDB documents viewable as a flattened
   table or an expandable per-document tree
 - Copy results as a table (pasteable into Slack, Sheets, or Excel) or export to CSV / Excel
+- Run the whole editor, or just the selection — plus **Query ▸ Run Statement** (F9) to run only
+  the statement under the cursor
 - Cancel a running query mid-flight, plus a configurable timeout that cancels it for you
 - Confirmation before any `UPDATE`/`DELETE` with no `WHERE` clause, or `updateMany`/`deleteMany`
   with an empty filter
@@ -74,6 +76,46 @@ kind.
 
 [SECURITY.md](SECURITY.md) has the full design, including an honest list of what it deliberately
 does *not* protect against.
+
+## Oracle
+
+Oracle connections need **no client software installed** — no Instant Client, no ODBC or JDBC
+driver, no `ORACLE_HOME`. Downpick uses node-oracledb in Thin mode, which is pure JavaScript and
+talks to the database directly.
+
+What that implies:
+
+- **Oracle Database 12.1 or newer.** Thin mode cannot talk to 11g or older.
+- **Service name, not SID.** Oracle is the one engine whose databases cannot be enumerated, so the
+  connection dialog asks for a Service Name. `lsnrctl status` on the server lists them. A wrong one
+  produces ORA-12514, which Downpick explains and points back at the field.
+- **The schema explorer shows application schemas only** — those with
+  `ALL_USERS.ORACLE_MAINTAINED = 'N'` — so `SYS`, `SYSTEM`, `XDB` and the rest of Oracle's own
+  accounts stay out of the tree. Your own schema sorts first.
+- **Oracle Wallets must be PEM.** Connecting to Autonomous Database over mTLS works, but the
+  `cwallet.sso` format does not; Thin mode needs the PEM.
+- **Native Network Encryption is not supported.** TLS is. A server with
+  `SQLNET.ENCRYPTION_SERVER = REQUIRED` cannot be reached.
+
+### Statements and transactions
+
+Oracle executes one statement per call, so Downpick splits your script and runs the statements in
+order, **stopping at the first failure**. The statements that already ran are reported in the
+Messages view.
+
+> **Each statement is committed as it runs.** This differs from SQL\*Plus, SQL Developer, and Toad,
+> which default to manual commit and give you Commit/Rollback buttons. A five-statement script is
+> five transactions here: if statement three fails, statements one and two are already committed and
+> are **not** rolled back. Downpick has no transaction control for any engine yet — the confirmation
+> prompt before an `UPDATE`/`DELETE` with no `WHERE` is the safety net until it does.
+
+Two type notes:
+
+- Unconstrained Oracle `NUMBER` columns hold up to 38 digits; JavaScript numbers carry about 15, so
+  very large or very precise values may lose precision in the grid.
+- Oracle `DATE` and `TIMESTAMP` carry no time zone, so they are read in the app's local zone and
+  displayed as UTC. A `DATE '2026-01-15'` shows as `2026-01-15T03:00:00.000Z` on a UTC-3 machine.
+  This matches how PostgreSQL `timestamp` columns already behave here.
 
 ## Ask AI
 

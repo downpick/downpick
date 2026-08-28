@@ -8,7 +8,7 @@ import {
   clearTabs,
 } from './persistence';
 
-export type DbType = 'postgres' | 'sqlserver' | 'mongodb';
+export type DbType = 'postgres' | 'sqlserver' | 'mongodb' | 'oracle';
 
 export interface SavedConnection {
   id: string;
@@ -16,6 +16,8 @@ export interface SavedConnection {
   type: DbType;
   host: string;
   port: number;
+  /** Oracle only — part of the address, so unlike `database` it is saved with the connection. */
+  serviceName?: string;
   username: string;
 }
 

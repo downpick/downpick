@@ -7,9 +7,23 @@ import { api } from '../api';
 import { cancelTabQuery } from '../queryRun';
 import { registerEditor, unregisterEditor, saveTabs } from '../persistence';
 import { ConfirmDialog } from './ConfirmDialog';
+import { splitSql, statementAtOffset, SqlDialect } from '../../../server/drivers/splitSql';
 
 interface QueryEditorProps {
   tab: Tab;
+}
+
+/**
+ * Which splitter grammar a connection's SQL follows. MongoDB has none — its shell syntax is not
+ * SQL — so Run Statement is a no-op there rather than guessing at a dialect. The menu item stays
+ * enabled because the menu is built once in the main process and knows nothing about which tab
+ * is in front; a Mongo tab simply ignores F9.
+ */
+function dialectFor(connType: string | undefined): SqlDialect | null {
+  if (connType === 'oracle') return 'oracle';
+  if (connType === 'sqlserver') return 'sqlserver';
+  if (connType === 'postgres') return 'postgres';
+  return null;
 }
 
 // Completion provider is registered once globally, not per-editor-mount.
@@ -211,6 +225,7 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
   // Populated after runQuery/formatQuery are defined below; kept as refs so
   // handleEditorMount's onKeyDown closure always calls the latest version.
   const runQueryRef = useRef<() => void>(() => {});
+  const runStatementRef = useRef<() => void>(() => {});
   const formatQueryRef = useRef<() => void>(() => {});
   const stopQueryRef = useRef<() => void>(() => {});
 
@@ -296,10 +311,61 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     return window.downpick.onMenuCommand((command) => {
       if (useStore.getState().activeTabId !== tabIdRef.current) return;
       if (command === 'query:run') runQueryRef.current();
+      else if (command === 'query:runStatement') runStatementRef.current();
       else if (command === 'query:cancel') stopQueryRef.current();
       else if (command === 'query:format') formatQueryRef.current();
     });
   }, []);
+
+  /**
+   * The shared run path.
+   *
+   * `lineOffset` is how many lines above `sql` sat in the document. The driver reports an error
+   * line relative to what it was SENT, so running a selection or a single statement used to
+   * report "Line 1" for an error forty lines down the file. Adding the offset back here is what
+   * makes the marker point at the line the user is actually looking at.
+   */
+  const runSql = useCallback(
+    async (sql: string, lineOffset: number) => {
+      if (!sql.trim()) return;
+
+      // Guard against accidentally rewriting/deleting every row/document in the target.
+      const unsafe = connType === 'mongodb' ? unsafeMongoWrites(sql) : unsafeStatements(sql);
+      if (unsafe.length > 0) {
+        const verbs = [...new Set(unsafe)].join(' / ');
+        const noun = connType === 'mongodb' ? 'call' : 'statement';
+        const label =
+          unsafe.length === 1
+            ? `a ${unsafe[0]} ${noun}`
+            : `${unsafe.length} ${verbs} ${noun}s`;
+        const message = connType === 'mongodb'
+          ? `You're about to run ${label} with an empty filter ({}).\n\n` +
+            `This will affect ALL documents in the collection and cannot be undone.`
+          : `You're about to run ${label} without a WHERE clause.\n\n` +
+            `This will affect ALL rows in the table and cannot be undone.`;
+        const ok = await askConfirm(message);
+        if (!ok) return;
+      }
+
+      // Unique id so the server can map a Stop request back to this exact query. It goes on
+      // the tab so the Cancel button in the results pane can reach it too.
+      const queryId = crypto.randomUUID();
+
+      // Clears the previous result and starts the timer.
+      useStore.getState().beginTabRun(tab.id, queryId);
+
+      try {
+        const result = await api.query(tab.connectionId, tab.database, sql, queryId);
+        useStore.getState().setTabResult(tab.id, result);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : 'Query failed';
+        const raw = e instanceof Error ? (e as Error & { line?: number }).line : undefined;
+        const line = raw === undefined ? undefined : raw + lineOffset;
+        useStore.getState().setTabError(tab.id, line ? `Line ${line}: ${message}` : message);
+      }
+    },
+    [tab.id, tab.connectionId, tab.database, askConfirm, connType],
+  );
 
   const runQuery = useCallback(async () => {
     const editor = editorRef.current;
@@ -313,48 +379,51 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     if (useStore.getState().tabs.find((t) => t.id === tab.id)?.isRunning) return;
 
     // Use the selected text when a non-empty selection exists; otherwise run everything.
+    // Unchanged behaviour, deliberately: this is muscle memory. Run Statement (Query menu, F9)
+    // is the new affordance and is kept entirely separate from it.
     const selection = selectionRef.current;
-    const sql =
-      selection && !selection.isEmpty()
-        ? (editor.getModel()?.getValueInRange(selection) ?? '')
-        : editor.getValue();
+    const useSelection = selection !== null && !selection.isEmpty();
+    const sql = useSelection
+      ? (editor.getModel()?.getValueInRange(selection) ?? '')
+      : editor.getValue();
 
-    if (!sql.trim()) return;
+    await runSql(sql, useSelection ? selection.startLineNumber - 1 : 0);
+  }, [tab.id, runSql]);
 
-    // Guard against accidentally rewriting/deleting every row/document in the target.
-    const unsafe = connType === 'mongodb' ? unsafeMongoWrites(sql) : unsafeStatements(sql);
-    if (unsafe.length > 0) {
-      const verbs = [...new Set(unsafe)].join(' / ');
-      const noun = connType === 'mongodb' ? 'call' : 'statement';
-      const label =
-        unsafe.length === 1
-          ? `a ${unsafe[0]} ${noun}`
-          : `${unsafe.length} ${verbs} ${noun}s`;
-      const message = connType === 'mongodb'
-        ? `You're about to run ${label} with an empty filter ({}).\n\n` +
-          `This will affect ALL documents in the collection and cannot be undone.`
-        : `You're about to run ${label} without a WHERE clause.\n\n` +
-          `This will affect ALL rows in the table and cannot be undone.`;
-      const ok = await askConfirm(message);
-      if (!ok) return;
-    }
+  /**
+   * Runs only the statement the caret is in — Query ▸ Run Statement (F9), the affordance every
+   * Oracle client has. Reached only through the menu command; there is no toolbar button, so it
+   * never competes with Run for space or meaning.
+   *
+   * Selecting the resolved range before running is deliberate: it is how the user sees what the
+   * splitter thinks a statement is, so a misdetection is visible rather than mysterious.
+   */
+  const runStatement = useCallback(async () => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const dialect = dialectFor(connType);
+    if (!editor || !model || !dialect) return;
+    if (useStore.getState().tabs.find((t) => t.id === tab.id)?.isRunning) return;
 
-    // Unique id so the server can map a Stop request back to this exact query. It goes on
-    // the tab so the Cancel button in the results pane can reach it too.
-    const queryId = crypto.randomUUID();
+    const position = editor.getPosition();
+    if (!position) return;
+    const statement = statementAtOffset(
+      splitSql(model.getValue(), dialect),
+      model.getOffsetAt(position),
+    );
+    if (!statement) return;
 
-    // Clears the previous result and starts the timer.
-    useStore.getState().beginTabRun(tab.id, queryId);
+    const from = model.getPositionAt(statement.start);
+    const to = model.getPositionAt(statement.end);
+    editor.setSelection({
+      startLineNumber: from.lineNumber,
+      startColumn: from.column,
+      endLineNumber: to.lineNumber,
+      endColumn: to.column,
+    });
 
-    try {
-      const result = await api.query(tab.connectionId, tab.database, sql, queryId);
-      useStore.getState().setTabResult(tab.id, result);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Query failed';
-      const line = e instanceof Error ? (e as Error & { line?: number }).line : undefined;
-      useStore.getState().setTabError(tab.id, line ? `Line ${line}: ${message}` : message);
-    }
-  }, [tab.id, tab.connectionId, tab.database, askConfirm, connType]);
+    await runSql(statement.text, from.lineNumber - 1);
+  }, [tab.id, connType, runSql]);
 
   // Ask the server to cancel the in-flight query. The query promise above then
   // rejects with "Query cancelled" and lands in setTabError — nothing is committed.
@@ -377,7 +446,8 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     // (the "⌥ Format" button is hidden for mongodb tabs, but guard anyway since this
     // is still reachable via the Shift+Alt+F keyboard shortcut).
     if (conn?.type === 'mongodb') return;
-    const language = conn?.type === 'sqlserver' ? 'transactsql' : 'postgresql';
+    const language =
+      conn?.type === 'sqlserver' ? 'transactsql' : conn?.type === 'oracle' ? 'plsql' : 'postgresql';
 
     let formatted: string;
     try {
@@ -395,6 +465,7 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
   // Keep the refs in sync so the onKeyDown handler (registered once at mount) always
   // calls the latest callback version without needing to be re-registered.
   runQueryRef.current = runQuery;
+  runStatementRef.current = runStatement;
   formatQueryRef.current = formatQuery;
   stopQueryRef.current = stopQuery;
 
