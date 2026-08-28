@@ -6,8 +6,12 @@ against.
 ## The vault
 
 Everything sensitive — connection metadata, database passwords, and AI provider API keys — lives
-in a single encrypted file, `~/.downpick/vault.enc`, created with mode `0600` inside a `0700`
-directory.
+in a single encrypted file, `~/.downpick/vault.enc` by default, created with mode `0600` inside a
+`0700` directory. On first launch you can open a vault you already have instead, or place the new
+one somewhere else — a removable disk or an encrypted volume; the path is remembered in
+`~/.downpick/settings.json`, which holds no secrets. It is only written there once a vault at that
+path has actually been created or unlocked, so a mistyped path or a file that turns out not to be a
+vault never survives a restart.
 
 - A master password is stretched with **scrypt** (N=2^17, r=8, p=1) into a key-encryption key.
 - That key wraps a random data key with **AES-256-GCM**; the data key encrypts the payload.
@@ -26,8 +30,8 @@ decrypted — by you or anyone else.
 
 ## Locking
 
-The vault starts locked on every launch, and every channel outside `vault:*` and `settings:get`
-is refused until you unlock it. Locking — manually via the **Vault unlocked** button at the left
+The vault starts locked on every launch, and every channel outside `vault:*`, `settings:get`, and
+the two native file dialogs is refused until you unlock it. Locking — manually via the **Vault unlocked** button at the left
 end of the status bar (or `Ctrl+L` / `Cmd+L`), or by idle timeout — also closes every open
 database connection, so nothing stays reachable behind a locked vault.
 
@@ -44,7 +48,10 @@ anymore — there is nothing to connect to. What protects the app now:
   `require` and `process` simply do not exist in the page.
 - Its only way out is the channel list in `server/channels.ts`, exposed through a preload script
   via `contextBridge`. Every call passes one dispatcher that checks the channel against that
-  allowlist and refuses everything outside `vault:*` and `settings:get` while the vault is locked.
+  allowlist and refuses everything outside `vault:*`, `settings:get`, and the native file dialogs
+  while the vault is locked. `settings:validate` deliberately stays behind that gate so it cannot
+  be used to probe the filesystem; the unlock screen learns whether a chosen file is a vault from
+  `files:pickVault`, which can only answer about a path the user picked in the OS dialog itself.
 - The UI is served from a custom `app://` protocol whose handler resolves each request inside
   `client/dist` and rejects anything that escapes it, percent-encoded traversals included.
 - A strict CSP (no `unsafe-eval`, no inline script, `connect-src 'none'`, `frame-ancestors 'none'`)

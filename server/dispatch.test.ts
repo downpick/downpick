@@ -48,7 +48,7 @@ before(() => {
 test('every declared channel has a handler', () => {
   const registered = new Set(registeredChannels());
   // These live in the Electron layer, which this suite deliberately does not load.
-  const electronOnly = new Set<string>(['files:save', 'clipboard:write']);
+  const electronOnly = new Set<string>(['files:save', 'files:pickVault', 'clipboard:write']);
   const missing = CHANNELS.filter((c) => !electronOnly.has(c) && !registered.has(c));
   assert.deepEqual(missing, [], 'channels declared but never wired');
 });

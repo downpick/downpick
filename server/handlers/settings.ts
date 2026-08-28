@@ -46,6 +46,39 @@ export function validateVaultFile(filePath: string): ValidationResult {
   }
 }
 
+/**
+ * Points the vault at `filePath`, creating its directory if it does not exist yet.
+ *
+ * In-memory only: `vault.setVaultPath` locks whatever was open, because the file at the new
+ * path has its own password and holding the old file's keys would be meaningless. Nothing is
+ * written to settings.json — see `persistVaultPath` for why those are two steps.
+ */
+export function prepareVaultPath(filePath: string): void {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch {
+      throw new AppError(400, `Cannot create directory: ${dir}`);
+    }
+  }
+  vault.setVaultPath(filePath);
+}
+
+/**
+ * Remembers `filePath` as the vault to open on the next launch.
+ *
+ * Called only once a vault at that path has actually been created or unlocked. A path that
+ * turned out to be a wrong pick — an unreadable file, a mistyped location — therefore never
+ * survives a restart, which is what stops a bad choice from stranding the user on an unlock
+ * screen for a file they cannot open.
+ */
+export function persistVaultPath(filePath: string): void {
+  const current = loadSettings();
+  if (current.vaultFilePath === filePath) return;
+  saveSettings({ ...current, vaultFilePath: filePath });
+}
+
 export function registerSettingsHandlers(): void {
   // Readable while the vault is locked, because the shell needs it to render the unlock
   // screen. Nothing here is secret: paths and timeouts only.
@@ -94,16 +127,6 @@ export function registerSettingsHandlers(): void {
         throw new AppError(400, `autoLockMinutes must be between 0 and ${MAX_AUTO_LOCK_MINUTES}`);
       }
 
-      // Ensure the directory can be created if it doesn't exist yet.
-      const dir = path.dirname(vaultFilePath);
-      if (!fs.existsSync(dir)) {
-        try {
-          fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-        } catch {
-          throw new AppError(400, `Cannot create directory: ${dir}`);
-        }
-      }
-
       const current = loadSettings();
       const next = {
         ...current,
@@ -113,9 +136,10 @@ export function registerSettingsHandlers(): void {
       };
       saveSettings(next);
 
-      // Pointing at a different vault locks the current one — the new file needs its own
-      // password, and holding the old file's keys open would be meaningless.
-      vault.setVaultPath(vaultFilePath);
+      // Unlike the first-run flow, this one persists the path up front: the user is here with
+      // the vault already open and is stating where it should live from now on, rather than
+      // guessing at a file they have yet to prove they can read.
+      prepareVaultPath(vaultFilePath);
       vault.setAutoLockMinutes(next.autoLockMinutes);
 
       return { ok: true, ...validateVaultFile(vaultFilePath) };

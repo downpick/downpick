@@ -160,7 +160,7 @@ with `Ctrl+,` / `Cmd+,`. The dialog has three sections.
 
 | Setting | What it does |
 |---|---|
-| **Vault file path** | Where the encrypted vault lives — point it at an encrypted volume if you like. Must include the filename. Changing it locks the current vault; the file at the new path has its own master password, and one is created if it does not exist. |
+| **Vault file path** | Where the encrypted vault lives — point it at an encrypted volume if you like. **Browse…** picks a vault you already have and **New location…** chooses where a new one goes, or type the path yourself — it must include the filename. Changing it locks the current vault; the file at the new path has its own master password, and one is created if it does not exist. The same choice is offered on first launch, before any vault exists. |
 | **Change master password** | Re-encrypts the vault key under a new password and deletes the previous backup file, which is still readable with the old one. |
 | **Auto-lock** | Re-locks the vault and closes every open database connection after this much inactivity (0–1440 minutes, `0` never auto-locks). Tracks IPC activity rather than mouse movement, so a long query is never interrupted by its own timeout. |
 

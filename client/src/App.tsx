@@ -256,7 +256,8 @@ export default function App() {
       <div className="h-screen bg-surface-1">
         <MacDragStrip />
         <VaultDialog
-          mode={vaultStatus.initialized ? 'unlock' : 'setup'}
+          mode={vaultStatus.initialized ? 'unlock' : 'choose'}
+          vaultPath={vaultStatus.path}
           onDone={() => void refreshVault()}
         />
       </div>

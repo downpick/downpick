@@ -47,6 +47,7 @@ export const CHANNELS = [
   'ai:history:clear',
 
   'files:save',
+  'files:pickVault',
   'clipboard:write',
 ] as const;
 
@@ -59,6 +60,11 @@ export type Channel = (typeof CHANNELS)[number];
  * unlock screen, and settings live in settings.json outside the vault, so reading them
  * cannot require it to be open. `files:save` is a renderer-driven save dialog that carries
  * its own payload and touches no secret.
+ *
+ * `files:pickVault` has to answer while locked by definition — it is how the first-run screen
+ * asks which vault to open before any vault is open. It is not the filesystem oracle
+ * `settings:validate` would be if it were exempt: the path comes back from the OS dialog the
+ * user drove, never from one the renderer composed.
  */
 export const UNLOCKED_NOT_REQUIRED: readonly Channel[] = [
   'vault:status',
@@ -68,6 +74,7 @@ export const UNLOCKED_NOT_REQUIRED: readonly Channel[] = [
   'vault:changePassword',
   'settings:get',
   'files:save',
+  'files:pickVault',
 ];
 
 export function isChannel(value: unknown): value is Channel {
@@ -182,6 +189,34 @@ export interface SaveFileResult {
   /** False when the user dismissed the dialog — not an error. */
   saved: boolean;
   path?: string;
+}
+
+/**
+ * Payload for `files:pickVault` — the native file dialog behind the first-run vault screen.
+ *
+ * Two modes rather than two channels, because they differ only in which Electron dialog is
+ * shown: `open` picks a vault that already exists, `create` picks where a new one will be
+ * written. Neither touches the file; both only hand a path back.
+ */
+export interface PickVaultFileRequest {
+  mode: 'open' | 'create';
+  /** Where the dialog starts. Usually the currently configured vault path. */
+  defaultPath?: string;
+}
+
+export interface PickVaultFileResult {
+  /** True when the user dismissed the dialog — a normal outcome, not an error. */
+  canceled: boolean;
+  path?: string;
+  /**
+   * Only for `open`: whether the chosen file is a vault this build can read. Validating here
+   * rather than through `settings:validate` keeps that channel behind the vault gate — the
+   * user chose this path in the OS dialog, so answering for it reveals nothing they did not
+   * already know.
+   */
+  fileExists?: boolean;
+  valid?: boolean;
+  error?: string;
 }
 
 /**

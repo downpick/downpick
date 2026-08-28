@@ -125,6 +125,31 @@ export function SettingsDialog({
     }, 400);
   }
 
+  /**
+   * Native file dialog for the path field.
+   *
+   * Two modes rather than one button, because the field legitimately accepts both an existing
+   * vault and a location where one will be created, and the dialogs are not interchangeable: a
+   * save panel asks whether to replace the vault you were trying to point at, and an open
+   * panel cannot name a file that does not exist yet.
+   *
+   * Whatever comes back goes through handlePathChange, so a picked path is validated and
+   * badged exactly like a typed one.
+   */
+  async function browseForVault(mode: 'open' | 'create') {
+    setSaveError(null);
+    try {
+      const result = await api.pickVaultFile({
+        mode,
+        defaultPath: inputPath.trim() || settings?.defaultVaultPath,
+      });
+      if (result.canceled || !result.path) return;
+      handlePathChange(result.path);
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'The file dialog could not be opened.');
+    }
+  }
+
   function resetToDefault() {
     if (settings) handlePathChange(settings.defaultVaultPath);
   }
@@ -283,14 +308,28 @@ export function SettingsDialog({
                     <span className="text-xs text-text-muted uppercase tracking-wide">
                       Vault file path
                     </span>
-                    {settings && inputPath !== settings.defaultVaultPath && (
+                    <div className="flex items-baseline gap-3">
                       <button
                         className="text-xs text-accent hover:text-accent-hover"
-                        onClick={resetToDefault}
+                        onClick={() => void browseForVault('open')}
                       >
-                        Reset to default
+                        Browse…
                       </button>
-                    )}
+                      <button
+                        className="text-xs text-accent hover:text-accent-hover"
+                        onClick={() => void browseForVault('create')}
+                      >
+                        New location…
+                      </button>
+                      {settings && inputPath !== settings.defaultVaultPath && (
+                        <button
+                          className="text-xs text-accent hover:text-accent-hover"
+                          onClick={resetToDefault}
+                        >
+                          Reset to default
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <input
                     className="input font-mono text-xs"

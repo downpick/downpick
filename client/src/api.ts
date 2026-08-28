@@ -7,6 +7,8 @@ import type {
   AiStreamEvent,
   Channel,
   ClipboardWriteRequest,
+  PickVaultFileRequest,
+  PickVaultFileResult,
   SaveFileRequest,
   StoredAiHistoryMessage,
 } from '../../server/channels';
@@ -114,6 +116,7 @@ export interface AiHistoryEntry {
 }
 
 export type { AiStreamEvent };
+export type { PickVaultFileRequest, PickVaultFileResult };
 export type {
   AiConversationDetail,
   AiConversationSummary,
@@ -195,10 +198,13 @@ export const api = {
   schema: (connectionId: string, database: string) =>
     invoke<import('./store').SchemaTree>('schema:get', { connectionId, database }),
 
-  // Vault
+  // Vault. `vaultFilePath` is only passed by the first-run screen, where the user picks which
+  // vault to create or open; everywhere else the configured path is already the right one.
   vaultStatus: () => invoke<VaultStatus>('vault:status'),
-  vaultSetup: (password: string) => invoke<{ ok: boolean }>('vault:setup', { password }),
-  vaultUnlock: (password: string) => invoke<{ ok: boolean }>('vault:unlock', { password }),
+  vaultSetup: (password: string, vaultFilePath?: string) =>
+    invoke<{ ok: boolean }>('vault:setup', { password, vaultFilePath }),
+  vaultUnlock: (password: string, vaultFilePath?: string) =>
+    invoke<{ ok: boolean }>('vault:unlock', { password, vaultFilePath }),
   vaultLock: () => invoke<{ ok: boolean }>('vault:lock'),
   vaultChangePassword: (currentPassword: string, newPassword: string) =>
     invoke<{ ok: boolean }>('vault:changePassword', { currentPassword, newPassword }),
@@ -217,6 +223,9 @@ export const api = {
     }),
   validateSettingsPath: (path: string) =>
     invoke<ValidationResult>('settings:validate', { path }),
+  /** Native file dialog for choosing a vault. Answers while the vault is still locked. */
+  pickVaultFile: (body: PickVaultFileRequest) =>
+    invoke<PickVaultFileResult>('files:pickVault', body),
 
   // AI providers
   aiProviders: () => invoke<AiProvidersResponse>('ai:providers:list'),

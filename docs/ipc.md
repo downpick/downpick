@@ -3,16 +3,16 @@
 Every call the UI makes goes through one `ipcMain.handle`, which forwards to the dispatcher in
 `server/dispatch.ts`. Channel names are declared in `server/channels.ts` — that file is the source
 of truth, and anything not on its list is rejected. Everything except `vault:*`, `settings:get`,
-and `files:save` is refused while the vault is locked. No reply ever contains a stored password or
-API key.
+`files:save`, and `files:pickVault` is refused while the vault is locked. No reply ever contains a
+stored password or API key.
 
 ## Channels
 
 | Channel | Description |
 |---------|-------------|
 | `vault:status` | Whether a vault exists and whether it is locked |
-| `vault:setup` | Create the vault |
-| `vault:unlock` | Unlock with the master password |
+| `vault:setup` | Create the vault. Optional `vaultFilePath` picks where, for the first-run screen |
+| `vault:unlock` | Unlock with the master password. Optional `vaultFilePath` opens a different vault |
 | `vault:lock` | Lock the vault and close every open database connection |
 | `vault:changePassword` | Rewrap the vault key under a new master password |
 | `connections:list` | List saved connections |
@@ -42,6 +42,7 @@ API key.
 | `ai:history:delete` | Delete one saved conversation and its messages |
 | `ai:history:clear` | Delete every saved conversation |
 | `files:save` | Show the native save dialog and write a file (CSV/XLSX export) |
+| `files:pickVault` | Show the native file dialog to open or place a vault file, and validate what came back |
 
 ## Events
 

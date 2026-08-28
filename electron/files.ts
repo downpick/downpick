@@ -1,7 +1,19 @@
 import { BrowserWindow, dialog } from 'electron';
 import * as fs from 'fs/promises';
-import { SaveFileRequest, SaveFileResult } from '../server/channels';
+import {
+  PickVaultFileRequest,
+  PickVaultFileResult,
+  SaveFileRequest,
+  SaveFileResult,
+} from '../server/channels';
 import { AppError, registerHandler } from '../server/dispatch';
+import { validateVaultFile } from '../server/handlers/settings';
+
+/** Offered in both vault dialogs. `.enc` first, but nothing stops a vault being named otherwise. */
+const VAULT_FILTERS = [
+  { name: 'Downpick vault', extensions: ['enc'] },
+  { name: 'All Files', extensions: ['*'] },
+];
 
 /**
  * Native save dialog for the results-grid exports.
@@ -35,4 +47,42 @@ export function registerFileHandlers(): void {
     }
     return { saved: true, path: result.filePath };
   });
+
+  /**
+   * The native file dialog behind the first-run vault screen.
+   *
+   * Lives here rather than in `server/handlers/` for the same reason `files:save` does: it
+   * needs a BrowserWindow to parent the sheet. The `open` mode validates what came back, so
+   * the renderer learns a wrong pick is not a vault without `settings:validate` having to step
+   * out from behind the vault gate.
+   */
+  registerHandler(
+    'files:pickVault',
+    async (request: PickVaultFileRequest): Promise<PickVaultFileResult> => {
+      const { mode, defaultPath } = request ?? ({} as PickVaultFileRequest);
+      if (mode !== 'open' && mode !== 'create') {
+        throw new AppError(400, 'Unknown file dialog mode.');
+      }
+
+      const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      const options = { defaultPath, filters: VAULT_FILTERS };
+
+      if (mode === 'create') {
+        const result = parent
+          ? await dialog.showSaveDialog(parent, options)
+          : await dialog.showSaveDialog(options);
+        if (result.canceled || !result.filePath) return { canceled: true };
+        return { canceled: false, path: result.filePath };
+      }
+
+      const openOptions = { ...options, properties: ['openFile' as const] };
+      const result = parent
+        ? await dialog.showOpenDialog(parent, openOptions)
+        : await dialog.showOpenDialog(openOptions);
+      const [picked] = result.filePaths ?? [];
+      if (result.canceled || !picked) return { canceled: true };
+
+      return { canceled: false, path: picked, ...validateVaultFile(picked) };
+    },
+  );
 }
