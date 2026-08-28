@@ -28,6 +28,11 @@ export function setVaultPath(next: string): void {
     // After the swap, not inside `lockNow`: the status observers care whether the file at
     // the *new* path exists, and asking any earlier would describe the vault we just left.
     notifyStatus();
+    // The keys are gone but the drivers they opened are not, and pointing the app at another
+    // vault would otherwise leave every database from the old one connected and queryable —
+    // the same hole `lock()` closes. Not awaited: this function is synchronous, and the
+    // teardown swallows each driver's own errors, so there is nothing here to wait for.
+    if (lockHandler) void lockHandler();
   }
 }
 

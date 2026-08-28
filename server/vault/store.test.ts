@@ -170,3 +170,19 @@ test('status listeners see every transition of the lock gate', async () => {
   await store.createVaultFile(PASSWORD);
   assert.equal(seen.length, 4, 'unsubscribing stops the notifications');
 });
+
+test('switching vaults tears the drivers down too, not just the keys', async () => {
+  let teardowns = 0;
+  store.setLockHandler(async () => {
+    teardowns += 1;
+  });
+  await store.createVaultFile(PASSWORD);
+
+  store.setVaultPath(path.join(dir, 'elsewhere.enc'));
+  // Not awaited by `setVaultPath` itself — it is synchronous — so give the handler a turn.
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(store.isLocked(), true);
+  assert.equal(teardowns, 1, 'the databases from the vault we left must not stay queryable');
+  store.setLockHandler(async () => {});
+});

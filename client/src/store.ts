@@ -207,6 +207,8 @@ interface AppState {
   connectErrors: Record<string, ConnectionError>;
   setConnectError: (id: string, error: string | null) => void;
   disconnectConnection: (id: string) => void;
+  /** Drops every connection at once. The vault lock closes the drivers server-side. */
+  disconnectAllConnections: () => void;
   // Initializes (or updates) connection entry with the fetched databases list
   setDatabasesList: (id: string, databases: string[]) => void;
   setDatabasesLoading: (id: string, loading: boolean) => void;
@@ -326,6 +328,13 @@ export const useStore = create<AppState>((set, get) => ({
       const { [id]: __, ...connectErrors } = s.connectErrors;
       return { activeConnections, connectErrors };
     }),
+
+  // Locking the vault closes every driver in the main process. Without mirroring that here
+  // the explorer would keep painting green dots at servers it can no longer reach, and the
+  // first sign of trouble would be a query coming back "No active connection for this
+  // database" — with nothing on screen explaining why, or that reconnecting is the fix.
+  disconnectAllConnections: () =>
+    set({ activeConnections: {}, connectingConnections: {}, connectErrors: {} }),
 
   setDatabasesList: (id, databases) =>
     set((s) => {

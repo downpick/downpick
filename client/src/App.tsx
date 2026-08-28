@@ -9,6 +9,7 @@ import { ResultsGrid } from './components/ResultsGrid';
 import { SettingsDialog } from './components/SettingsDialog';
 import { AiPanel } from './components/AiPanel';
 import { StatusBar } from './components/StatusBar';
+import { Icon } from './components/Icon';
 import Logo from './components/Logo';
 import { IS_MAC } from './platform';
 
@@ -47,6 +48,8 @@ export default function App() {
   // Zustand mutation (setTabResult, setTabRunning, setSchemaLoading, etc.).
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
+  // Read here only to mark tabs whose connection is not live — see the tab bar below.
+  const activeConnections = useStore((s) => s.activeConnections);
 
   const showSettingsDialog = useStore((s) => s.showSettingsDialog);
   const settingsTab = useStore((s) => s.settingsTab);
@@ -61,6 +64,7 @@ export default function App() {
     openSettings,
     setSavedConnections,
     refreshAiProviders,
+    disconnectAllConnections,
   } = useStore.getState();
 
   // Restore persisted panel sizes once (lazy initializer runs a single read).
@@ -204,6 +208,22 @@ export default function App() {
   // closes is what stops the panel's own "Configure AI provider" button from sending the
   // user to Settings, adding a provider, and returning to the same empty state.
   const vaultUnlocked = Boolean(vaultStatus?.initialized && !vaultStatus.locked);
+
+  // Locking closes every driver in the main process, so the tree's green dots and the
+  // databases hanging under them stop describing anything real the moment it happens —
+  // and the only symptom used to be the next query failing with "No active connection for
+  // this database", long after the cause.
+  //
+  // Keyed off the vault status rather than done inside `lockVault`, because the paths that
+  // never go through it need it just as much: the idle auto-lock and a vault-path switch,
+  // which both arrive as a 423. And it clears on *both* edges of the gate — a request that
+  // was still in flight when the lock landed reports its 423 afterwards, which would
+  // otherwise pin "The vault is locked." under a connection row on the fresh unlock.
+  const vaultGateUp = Boolean(vaultStatus && (!vaultStatus.initialized || vaultStatus.locked));
+  useEffect(() => {
+    disconnectAllConnections();
+  }, [vaultGateUp, disconnectAllConnections]);
+
   useEffect(() => {
     if (showSettingsDialog || !vaultUnlocked) return;
     void refreshAiProviders();
@@ -341,6 +361,17 @@ export default function App() {
                 >
                   {tab.database}
                 </span>
+                {/* A tab outlives its connection — the vault locking closes every driver,
+                    and restored tabs come back before anything is connected at all. Saying
+                    so here is what stops the next Run from being the first hint. */}
+                {!activeConnections[tab.connectionId] && (
+                  <span
+                    className="flex flex-shrink-0 text-warning"
+                    title={`Disconnected — open ${tab.database} from the explorer to reconnect`}
+                  >
+                    <Icon name="plug-connected-x" size={12} />
+                  </span>
+                )}
                 {tab.isRunning && (
                   <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
                 )}
