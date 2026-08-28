@@ -1,7 +1,7 @@
 import { app, BrowserWindow, nativeImage, session } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { bootstrap, shutdown } from '../server/bootstrap';
+import { bootstrap, getVaultStatus, onVaultStatusChange, shutdown } from '../server/bootstrap';
 import { attachAiStream, registerIpc } from './ipc';
 import { buildMenu } from './menu';
 import { registerAppProtocol, registerAppScheme } from './protocol';
@@ -144,7 +144,15 @@ if (!app.requestSingleInstanceLock()) {
     installPermissionHandlers(session.defaultSession);
     installDevCsp();
     if (!DEV_SERVER) registerAppProtocol();
-    buildMenu(Boolean(DEV_SERVER));
+
+    // Rebuilt on every lock/unlock so the vault-gated items are greyed out while the vault
+    // is shut. Driven from the store rather than from the renderer because the idle
+    // auto-lock fires in this process, and the renderer does not find out about it until
+    // some later call comes back 423.
+    const refreshMenu = (status: { initialized: boolean; locked: boolean }) =>
+      buildMenu(Boolean(DEV_SERVER), status.initialized && !status.locked);
+    onVaultStatusChange(refreshMenu);
+    refreshMenu(getVaultStatus());
 
     // macOS reads the dock icon from the running bundle, which unpackaged means Electron's
     // own. A packaged build already carries the right .icns, so this is a no-op there —

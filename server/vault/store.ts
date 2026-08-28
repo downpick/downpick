@@ -25,6 +25,9 @@ export function setVaultPath(next: string): void {
     vaultPath = next;
     lastWriteSeq = 0;
     lastWrittenMtimeMs = 0;
+    // After the swap, not inside `lockNow`: the status observers care whether the file at
+    // the *new* path exists, and asking any earlier would describe the vault we just left.
+    notifyStatus();
   }
 }
 
@@ -62,6 +65,35 @@ let lockHandler: LockHandler | null = null;
 
 export function setLockHandler(handler: LockHandler): void {
   lockHandler = handler;
+}
+
+/**
+ * Observers of the lock gate, kept separate from `lockHandler` above: that slot is taken by
+ * the driver teardown and only fires from `lock()`, while these also need the unlock and the
+ * vault-path switch — and the idle auto-lock, which is the one transition no renderer
+ * round-trip would otherwise reveal. A set rather than a slot because more than one thing
+ * (today the application menu) can care.
+ */
+type StatusListener = (status: { initialized: boolean; locked: boolean }) => void;
+const statusListeners = new Set<StatusListener>();
+
+export function onStatusChange(listener: StatusListener): () => void {
+  statusListeners.add(listener);
+  return () => statusListeners.delete(listener);
+}
+
+/** Last status the listeners were told about, so no-op transitions stay quiet — `lock()` on
+ * an already-locked vault happens on every shutdown, and `setVaultPath` locks before it
+ * swaps. */
+let lastNotified: { initialized: boolean; locked: boolean } | null = null;
+
+function notifyStatus(): void {
+  const status = getStatus();
+  const unchanged =
+    lastNotified?.initialized === status.initialized && lastNotified?.locked === status.locked;
+  if (unchanged) return;
+  lastNotified = status;
+  for (const listener of statusListeners) listener(status);
 }
 
 export function isInitialized(): boolean {
@@ -157,6 +189,7 @@ export function createVaultFile(password: string, initial: VaultPayload = emptyP
     lastWriteSeq = payload.writeSeq;
     state = { status: 'unlocked', keys, payload };
     touch();
+    notifyStatus();
   });
 }
 
@@ -178,6 +211,7 @@ export function unlock(password: string): Promise<void> {
     assertNotRolledBack(payload);
     state = { status: 'unlocked', keys, payload };
     touch();
+    notifyStatus();
   });
 }
 
@@ -192,6 +226,9 @@ function lockNow(): void {
 
 export async function lock(): Promise<void> {
   lockNow();
+  // Before the drivers are torn down rather than after: closing pools can take a while, and
+  // the menu should grey out the moment the vault shuts, not once the sockets are gone.
+  notifyStatus();
   // Without this the lock would be theatre: the drivers stay connected and every open
   // database remains queryable with the vault supposedly shut.
   if (lockHandler) await lockHandler();

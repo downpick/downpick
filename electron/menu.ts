@@ -7,6 +7,17 @@ import { EVENTS, MenuCommand } from '../server/channels';
  * Menu items do not reach into app state; they send a `menu:command` the renderer routes to
  * the same functions the on-screen buttons call. That keeps one implementation of "run the
  * query" rather than a second one that drifts.
+ *
+ * Everything that only makes sense behind an open vault is disabled while the vault is
+ * locked or has not been created yet. Not cosmetic: the renderer's command listener sits
+ * above its lock gate, so a `settings:open` arriving while locked used to flip the dialog on
+ * in a store nobody was rendering — and the Settings dialog was then already open the moment
+ * the user unlocked. Disabling also takes the accelerator out of play, which is why the Edit
+ * menu is deliberately left alone: the unlock screen's password field needs paste.
+ *
+ * The whole menu is rebuilt on each change rather than toggling `enabled` by id — this
+ * function is a pure function of its two arguments, and keeping it that way is cheaper to
+ * reason about than a second code path that mutates the live menu.
  */
 
 function send(command: MenuCommand): void {
@@ -14,7 +25,7 @@ function send(command: MenuCommand): void {
   window?.webContents.send(EVENTS.menuCommand, command);
 }
 
-export function buildMenu(isDev: boolean): void {
+export function buildMenu(isDev: boolean, vaultUnlocked: boolean): void {
   const isMac = process.platform === 'darwin';
 
   const appMenu: MenuItemConstructorOptions[] = isMac
@@ -27,17 +38,20 @@ export function buildMenu(isDev: boolean): void {
             {
               label: 'Settings…',
               accelerator: 'CmdOrCtrl+,',
+              enabled: vaultUnlocked,
               click: () => send('settings:open'),
             },
             {
               label: 'AI Providers…',
               accelerator: 'CmdOrCtrl+Shift+,',
+              enabled: vaultUnlocked,
               click: () => send('settings:ai'),
             },
             { type: 'separator' },
             {
               label: 'Lock Vault',
               accelerator: 'CmdOrCtrl+L',
+              enabled: vaultUnlocked,
               click: () => send('vault:lock'),
             },
             { type: 'separator' },
@@ -58,6 +72,7 @@ export function buildMenu(isDev: boolean): void {
   const newConnectionItem: MenuItemConstructorOptions = {
     label: 'New Connection…',
     accelerator: 'CmdOrCtrl+N',
+    enabled: vaultUnlocked,
     click: () => send('connection:new'),
   };
 
@@ -71,17 +86,20 @@ export function buildMenu(isDev: boolean): void {
           {
             label: 'Settings…',
             accelerator: 'CmdOrCtrl+,',
+            enabled: vaultUnlocked,
             click: () => send('settings:open'),
           },
           {
             label: 'AI Providers…',
             accelerator: 'CmdOrCtrl+Shift+,',
+            enabled: vaultUnlocked,
             click: () => send('settings:ai'),
           },
           { type: 'separator' },
           {
             label: 'Lock Vault',
             accelerator: 'CmdOrCtrl+L',
+            enabled: vaultUnlocked,
             click: () => send('vault:lock'),
           },
           { type: 'separator' },
@@ -115,6 +133,7 @@ export function buildMenu(isDev: boolean): void {
         // F5 stays unclaimed here on purpose: the renderer already binds it window-wide, and
         // an accelerator would swallow the key before that listener ever saw it.
         accelerator: 'CmdOrCtrl+Return',
+        enabled: vaultUnlocked,
         click: () => send('query:run'),
       },
       {
@@ -124,17 +143,20 @@ export function buildMenu(isDev: boolean): void {
         // this item has only one binding to give, so letting the menu own it means the shortcut
         // shows up next to the label — which is the whole point of putting it here.
         accelerator: 'F9',
+        enabled: vaultUnlocked,
         click: () => send('query:runStatement'),
       },
       {
         label: 'Cancel Query',
         accelerator: 'CmdOrCtrl+Shift+Return',
+        enabled: vaultUnlocked,
         click: () => send('query:cancel'),
       },
       { type: 'separator' },
       {
         label: 'Format Query',
         accelerator: 'Shift+Alt+F',
+        enabled: vaultUnlocked,
         click: () => send('query:format'),
       },
     ],

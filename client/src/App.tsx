@@ -212,14 +212,20 @@ export default function App() {
   // The menu items that act on the shell. The query commands are handled inside
   // QueryEditor, which is the only thing that knows which tab is active. Each one calls
   // the same function the on-screen control does — no second implementation to drift.
+  //
+  // The vault check is not redundant with the menu's own disabled state: this effect is
+  // mounted above the lock gate below, so a command that arrives while the vault is shut
+  // would otherwise flip `showSettingsDialog` on in a store nothing is rendering, and the
+  // dialog would be sitting open the moment the user unlocked.
   useEffect(() => {
     return window.downpick.onMenuCommand((command) => {
+      if (!vaultUnlocked) return;
       if (command === 'vault:lock') void lockVault();
       if (command === 'connection:new') setShowConnectionDialog(true);
       if (command === 'settings:open') openSettings('general');
       if (command === 'settings:ai') openSettings('ai');
     });
-  }, [lockVault, setShowConnectionDialog, openSettings]);
+  }, [vaultUnlocked, lockVault, setShowConnectionDialog, openSettings]);
 
   // Flush open tabs to localStorage when the user leaves, so in-progress (uncommitted)
   // editor edits are captured. The store subscription already saves structural changes;

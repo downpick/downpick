@@ -26,6 +26,14 @@ export function bootstrap(): void {
 }
 
 /**
+ * Re-exported so the Electron entry point can follow the lock gate without reaching into the
+ * vault store itself — this file is already the one place the main process wires store
+ * callbacks. The application menu uses it to grey out everything that needs an open vault.
+ */
+export const onVaultStatusChange = vault.onStatusChange;
+export const getVaultStatus = vault.getStatus;
+
+/**
  * Releases everything that holds a socket, so the database servers see a clean disconnect
  * rather than a dropped connection they have to time out.
  *

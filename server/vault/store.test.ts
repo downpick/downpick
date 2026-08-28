@@ -149,3 +149,24 @@ test('changing the password requires the current one', async () => {
   await store.lock();
   await store.unlock(PASSWORD);
 });
+
+test('status listeners see every transition of the lock gate', async () => {
+  const seen: string[] = [];
+  const stop = store.onStatusChange((s) => seen.push(`${s.initialized ? 'init' : 'new'}/${s.locked ? 'locked' : 'open'}`));
+
+  await store.createVaultFile(PASSWORD);
+  await store.lock();
+  // Already locked — a no-op transition must stay quiet, or every shutdown would report one.
+  await store.lock();
+  await store.unlock(PASSWORD);
+
+  // Switching vaults locks and then lands on a file that does not exist yet, so the status
+  // reported has to be the *new* path's, not the one we just left.
+  store.setVaultPath(path.join(dir, 'other.enc'));
+
+  assert.deepEqual(seen, ['init/open', 'init/locked', 'init/open', 'new/locked']);
+
+  stop();
+  await store.createVaultFile(PASSWORD);
+  assert.equal(seen.length, 4, 'unsubscribing stops the notifications');
+});
