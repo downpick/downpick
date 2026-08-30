@@ -10,7 +10,7 @@ import { adapterFor } from '../ai/adapters';
 import { HistoryEntry, runAgent } from '../ai/agent';
 import { findDefinition, isProviderKind, PROVIDER_DEFINITIONS } from '../ai/catalog';
 import { AiRequestError, resolveBaseUrl } from '../ai/net';
-import { createSchemaToolset } from '../ai/tools';
+import { createSchemaToolset, EditorContext } from '../ai/tools';
 import { AiChatEvent, AiStreamEvent } from '../channels';
 import { findConnection } from '../connections';
 import { AppError, registerHandler } from '../dispatch';
@@ -69,6 +69,23 @@ function parseHistory(value: unknown): HistoryEntry[] {
       text: e.text,
       sql: typeof e.sql === 'string' ? e.sql : null,
     }));
+}
+
+/**
+ * The query the user had open, captured in the renderer the moment they hit send.
+ *
+ * Shape only. How much of it the model is actually shown is the toolset's business — it sits
+ * next to the caps on table and column counts there, and truncating here would hide the
+ * overflow from the very code that has to tell the model about it.
+ *
+ * A blank buffer is `null` rather than an empty string, which is what keeps the read_editor
+ * tool from being offered at all on an untouched tab.
+ */
+function parseEditor(value: unknown): EditorContext | null {
+  if (!value || typeof value !== 'object') return null;
+  const { text, isSelection } = value as { text?: unknown; isSelection?: unknown };
+  if (typeof text !== 'string' || !text.trim()) return null;
+  return { text, isSelection: isSelection === true };
 }
 
 function providerMessage(err: unknown): string {
@@ -220,8 +237,9 @@ export function registerAiHandlers(): void {
       database?: string;
       question?: string;
       history?: unknown;
+      editor?: unknown;
     }) => {
-      const { providerId, model, connectionId, database, question, history } = body ?? {};
+      const { providerId, model, connectionId, database, question, history, editor } = body ?? {};
 
       if (typeof question !== 'string' || !question.trim()) {
         throw new AppError(400, 'A question is required.');
@@ -248,6 +266,8 @@ export function registerAiHandlers(): void {
         );
       }
 
+      const editorContext = parseEditor(editor);
+
       const streamId = randomUUID();
       const controller = new AbortController();
       runningStreams.set(streamId, controller);
@@ -269,7 +289,14 @@ export function registerAiHandlers(): void {
             model: model.trim(),
             dbType: connection.type,
             database,
-            toolset: createSchemaToolset(driver, connection.type, database),
+            toolset: createSchemaToolset(driver, connection.type, database, editorContext),
+            // Shape only. The text itself stays in the toolset until the model asks for it.
+            editor: editorContext
+              ? {
+                  lines: editorContext.text.split('\n').length,
+                  isSelection: editorContext.isSelection,
+                }
+              : null,
             history: parseHistory(history),
             question: question.trim(),
             signal: controller.signal,

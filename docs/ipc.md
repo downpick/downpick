@@ -34,7 +34,7 @@ stored password or API key.
 | `ai:providers:models` | Ask a provider which models the key can use (best-effort) |
 | `ai:providers:update` | Rename a provider, toggle its models, or replace its key |
 | `ai:providers:delete` | Remove a provider, and its key with it |
-| `ai:chat:start` | Ask a question. Returns a `streamId`; the answer arrives as events |
+| `ai:chat:start` | Ask a question, optionally carrying the tab's editor contents. Returns a `streamId`; the answer arrives as events |
 | `ai:chat:cancel` | Abort a running answer by its `streamId` |
 | `ai:history:list` | Page through saved Ask AI conversations, newest first |
 | `ai:history:get` | Load one saved conversation's full transcript |

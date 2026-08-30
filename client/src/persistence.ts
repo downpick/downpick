@@ -17,17 +17,43 @@ interface PersistedTab {
   sql: string;
 }
 
+/** A range in the editor, in Monaco's 1-based line/column coordinates. */
+export interface EditorRange {
+  startLineNumber: number;
+  startColumn: number;
+  endLineNumber: number;
+  endColumn: number;
+}
+
+/** Where a tab's editor stands right now: the whole buffer, plus whatever is selected. */
+export interface EditorSnapshot {
+  text: string;
+  /** The selected text, or null when nothing is selected. */
+  selectedText: string | null;
+  /** Where that selection was, so an edit can be written back exactly where it came from. */
+  selectionRange: EditorRange | null;
+}
+
 // Monaco editors are uncontrolled — the latest SQL only reaches the store on tab
 // close. To capture in-progress edits when the user leaves the app, each mounted
 // QueryEditor registers a getter here so saveTabs() can pull the live value.
-const editorValueGetters = new Map<string, () => string>();
+//
+// Ask AI reads the query through this same registry, which is why the getter hands back a
+// snapshot rather than a bare string: the assistant needs the selection as well, and a
+// second parallel registry for it would be one more thing to keep in sync.
+const editorSnapshotGetters = new Map<string, () => EditorSnapshot>();
 
-export function registerEditor(tabId: string, getValue: () => string): void {
-  editorValueGetters.set(tabId, getValue);
+export function registerEditor(tabId: string, getSnapshot: () => EditorSnapshot): void {
+  editorSnapshotGetters.set(tabId, getSnapshot);
 }
 
 export function unregisterEditor(tabId: string): void {
-  editorValueGetters.delete(tabId);
+  editorSnapshotGetters.delete(tabId);
+}
+
+/** The live state of a tab's editor, or null when no editor is mounted for that tab. */
+export function getEditorSnapshot(tabId: string): EditorSnapshot | null {
+  return editorSnapshotGetters.get(tabId)?.() ?? null;
 }
 
 export function loadPersistFlag(): boolean {
@@ -90,7 +116,7 @@ export function saveTabs(tabs: Tab[], activeTabId: string | null): void {
       connectionName: t.connectionName,
       database: t.database,
       // Prefer the live editor value over the (possibly stale) store value.
-      sql: editorValueGetters.get(t.id)?.() ?? t.sql,
+      sql: editorSnapshotGetters.get(t.id)?.().text ?? t.sql,
     }));
     localStorage.setItem(TABS_KEY, JSON.stringify(persisted));
     if (activeTabId) localStorage.setItem(ACTIVE_KEY, activeTabId);

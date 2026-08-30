@@ -3,17 +3,36 @@ import { ColumnNode, Driver, SchemaTree } from '../drivers/types';
 import { ToolCall, ToolSpec } from './types';
 
 /**
- * The complete set of database access the assistant has: read the catalog, read column
- * lists. There is deliberately no tool that runs a query — generated SQL goes into the
- * editor and only a human's click on Run ever executes it.
+ * The complete set of reads the assistant has: the catalog, column lists, and the query
+ * sitting in the user's editor. There is deliberately no tool that runs a query — generated
+ * SQL goes into the editor and only a human's click on Run ever executes it.
+ *
+ * The editor is a tool rather than something pasted into every prompt so that a question
+ * which has nothing to do with the open query never pays for its tokens. The text itself is
+ * captured in the renderer when the question is sent and handed in here; nothing reaches
+ * back across the process boundary mid-answer.
  */
 
 /** Caps, so a warehouse with thousands of tables cannot blow out the model's context. */
 const MAX_TABLES = 400;
 const MAX_COLUMNS_PER_TABLE = 250;
 const MAX_TABLES_PER_DESCRIBE = 12;
+/**
+ * How much of the editor the model is shown. A migration script thousands of lines long is a
+ * real thing to have open in a tab; truncating its tail beats refusing to look at all, and the
+ * marker keeps the model from believing it has seen the whole thing.
+ */
+export const MAX_EDITOR_CHARS = 20_000;
 /** How many documents to sample when a document store has to have its fields inferred. */
 const MONGO_SAMPLE_SIZE = 50;
+
+/** What the user's editor held at the moment the question was sent. */
+export interface EditorContext {
+  /** The buffer — or only the highlighted fragment, when `isSelection`. */
+  text: string;
+  /** True when `text` is just the part the user had selected, not the whole buffer. */
+  isSelection: boolean;
+}
 
 export interface ToolOutcome {
   /** Short past-tense line shown in the panel's trace, e.g. "Reading columns for orders". */
@@ -52,9 +71,12 @@ export function createSchemaToolset(
   driver: Driver,
   dbType: DbType,
   database: string,
+  editor: EditorContext | null = null,
 ): SchemaToolset {
   const isDocumentStore = dbType === 'mongodb';
   const tableWord = isDocumentStore ? 'collection' : 'table';
+  /** What the thing in the editor is called — a document store holds no SQL. */
+  const queryWord = isDocumentStore ? 'shell expression' : 'query';
 
   // One catalog read per chat turn, shared by every tool call in the agent loop.
   let treePromise: Promise<SchemaTree> | null = null;
@@ -129,6 +151,45 @@ export function createSchemaToolset(
       required: ['tables'],
     },
   });
+
+  // Offered only when the editor actually holds something. A tool that always answers
+  // "nothing here" is a round-trip the model spends to learn nothing, and on an empty tab
+  // the honest signal is that the tool does not exist.
+  if (editor) {
+    const subject = editor.isSelection
+      ? 'the fragment the user has selected in their editor'
+      : `the ${queryWord} the user currently has open in their editor`;
+    specs.push({
+      name: 'read_editor',
+      description:
+        `Read ${subject}. Start here when the question refers to "this query", asks for an edit ` +
+        'to what is already written, or asks what the open query does or why it is slow or ' +
+        `wrong. It shows you what the user typed, not what exists in the ${dbType === 'mongodb' ? 'database' : 'catalog'} — ` +
+        `any ${tableWord} or ${isDocumentStore ? 'field' : 'column'} you add on top of it still ` +
+        'needs describe_tables. Reading executes nothing.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    });
+  }
+
+  function readEditor(context: EditorContext): ToolOutcome {
+    const overflow = context.text.length - MAX_EDITOR_CHARS;
+    const text =
+      overflow > 0
+        ? `${context.text.slice(0, MAX_EDITOR_CHARS)}\n… (truncated, ${overflow} more characters)`
+        : context.text;
+
+    return {
+      label: context.isSelection ? 'Reading the selected query' : 'Reading the editor',
+      content: [
+        context.isSelection
+          ? 'The fragment the user has selected in their editor. Nothing outside it is shown, so' +
+            ' an edit has to rewrite this fragment and only this fragment:'
+          : `The full contents of the user's editor:`,
+        '',
+        text,
+      ].join('\n'),
+    };
+  }
 
   async function listSchemas(): Promise<ToolOutcome> {
     const tables = await allTables();
@@ -249,6 +310,10 @@ export function createSchemaToolset(
           return listTables(call.args);
         case 'describe_tables':
           return describeTables(call.args);
+        // Same shape as list_schemas on a document store: when there was nothing to read the
+        // spec was never offered, so a call to it gets the unknown-tool reply.
+        case 'read_editor':
+          return editor ? readEditor(editor) : unknownTool();
         default:
           return unknownTool();
       }

@@ -6,6 +6,7 @@ import {
   savePersistFlag,
   saveTabs,
   clearTabs,
+  EditorRange,
 } from './persistence';
 
 export type DbType = 'postgres' | 'sqlserver' | 'mongodb' | 'oracle';
@@ -116,6 +117,14 @@ export interface Tab {
    * Insert on the same message again to start over.
    */
   sqlRevision?: number;
+  /**
+   * What the assistant's latest insert should write, read by QueryEditor when `sqlRevision`
+   * changes. `range` is set only when the answer was written against a selection: replacing
+   * the whole buffer with a rewritten fragment would silently delete everything around it.
+   * `expected` is the text that was selected, so a range the user has since typed over can be
+   * recognised as stale rather than trusted blindly.
+   */
+  pendingInsert?: { text: string; range: EditorRange | null; expected: string | null } | null;
 }
 
 /**
@@ -138,6 +147,13 @@ export interface AiMessage {
   trace?: AiTraceStep[];
   /** Assistant only: true for a couple of seconds after the user inserts this query. */
   justInserted?: boolean;
+  /**
+   * Assistant only: the selection this answer was written against, so inserting it replaces
+   * that fragment rather than the whole buffer. Deliberately absent from what `persist()`
+   * writes to chats.db — a range captured in a previous session points nowhere, and a resumed
+   * message falls back to replacing everything, which is what insert has always done.
+   */
+  insertTarget?: { range: EditorRange; expected: string } | null;
   isError?: boolean;
 }
 
@@ -271,7 +287,12 @@ interface AppState {
   updateAiChat: (tabId: string, patch: (chat: AiChat) => Partial<AiChat>) => void;
   clearAiChat: (tabId: string) => void;
   /** Pushes generated SQL into a tab's editor and flags it as unrun AI output. */
-  insertAiSql: (tabId: string, messageId: string, sql: string) => void;
+  insertAiSql: (
+    tabId: string,
+    messageId: string,
+    sql: string,
+    target?: { range: EditorRange; expected: string } | null,
+  ) => void;
   clearInsertedFlag: (tabId: string, messageId: string) => void;
   /** Drops a saved conversation into a tab, replacing whatever it was showing. */
   loadAiChat: (
@@ -597,15 +618,30 @@ export const useStore = create<AppState>((set, get) => ({
   clearAiChat: (tabId) =>
     set((s) => ({ aiChats: { ...s.aiChats, [tabId]: emptyAiChat() } })),
 
-  // Reuses the same path SchemaTree's double-click takes: writing tab.sql is what makes
-  // QueryEditor push the value into its (uncontrolled) Monaco instance.
-  insertAiSql: (tabId, messageId, sql) =>
+  // Bumping sqlRevision is what makes QueryEditor push the value into its (uncontrolled)
+  // Monaco instance.
+  //
+  // `sql` is written to `tab.sql` only for a whole-buffer insert, where it is what the editor
+  // will hold. A selection-scoped insert leaves `tab.sql` alone on purpose: it holds a
+  // fragment, and the separate effect that watches `tab.sql` would take that fragment for the
+  // new buffer and setValue() the rest of the query away.
+  insertAiSql: (tabId, messageId, sql, target = null) =>
     set((s) => {
       const chat = s.aiChats[tabId];
       return {
         tabs: s.tabs.map((t) =>
           t.id === tabId
-            ? { ...t, sql, fromAi: true, sqlRevision: (t.sqlRevision ?? 0) + 1 }
+            ? {
+                ...t,
+                ...(target ? {} : { sql }),
+                fromAi: true,
+                sqlRevision: (t.sqlRevision ?? 0) + 1,
+                pendingInsert: {
+                  text: sql,
+                  range: target?.range ?? null,
+                  expected: target?.expected ?? null,
+                },
+              }
             : t,
         ),
         aiChats: chat

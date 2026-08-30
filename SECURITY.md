@@ -81,12 +81,15 @@ Worth stating plainly:
   history** in the Ask AI panel's history list deletes them.
 - **A swapped-in vault file.** GCM detects tampering within a file, not the substitution of a
   whole different one.
-- **What Ask AI sends out.** Using it hands your schema *names* to a third-party API. The
-  [Ask AI section of the README](README.md#ask-ai) covers exactly what leaves the machine.
+- **What Ask AI sends out.** Using it hands your schema *names* to a third-party API, and — when
+  the assistant asks for it — the query open in the tab, which unlike a schema name can contain
+  literals you typed. The [Ask AI section of the README](README.md#ask-ai) covers exactly what
+  leaves the machine.
 
 Schema names are also model *input*, so a table or column named to look like an instruction could
-in principle influence Ask AI's answer. That is contained by design rather than by filtering:
-nothing the model writes is executed, and you read the query before running it.
+in principle influence Ask AI's answer. The same goes for the query text the assistant reads back
+out of your editor, though that one you wrote yourself. Both are contained by design rather than
+by filtering: nothing the model writes is executed, and you read the query before running it.
 
 ## Reporting a vulnerability
 

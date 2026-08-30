@@ -125,6 +125,14 @@ no tool that executes anything. The query it writes goes into the editor when yo
 into editor**; running it is still your click on **Run**, still behind the `WHERE`-clause
 confirmation.
 
+It can also read the query already open in the tab, through a fourth read-only tool,
+`read_editor`. That makes "edit this query to group by month", "what does this query do?", and
+"why is this slow?" work on what you have written rather than only on a blank tab. Select part of
+the query first and the assistant sees just that fragment — and inserting its answer replaces
+that fragment, leaving the rest of the query alone. Whether it inserts the whole buffer or a
+fragment, `Ctrl+Z` / `Cmd+Z` takes you back to what you had. An explanation comes back as prose
+with nothing to insert, because you asked what your query does, not for a different one.
+
 <img src="docs/ai.gif" alt="Ask AI reading the schema and writing a query into the editor" width="100%">
 
 Conversations are kept. Each tab has its own, and the **history** button in the panel header
@@ -137,6 +145,12 @@ schemas, tables, and columns the assistant looks up. No row data is ever sent �
 any, because it cannot run a query. On MongoDB, `describe_tables` samples up to 50 documents to
 learn field names and types; the sampled values are read in the main process and discarded, and
 only names and types reach the model.
+
+The query in your editor is also sent, but only when the assistant calls `read_editor` — a
+question that has nothing to do with the open query never carries it. If you have text selected,
+only the selection is sent, never the rest of the buffer. Bear in mind that a query is not always
+just structure: a literal you typed into a `WHERE` clause is part of it, and it goes along with
+it. Anything past about 20,000 characters is truncated before being sent.
 
 **Providers:** Settings → AI providers takes OpenAI, Anthropic, Google Gemini, Azure OpenAI, and
 any OpenAI-compatible endpoint — including local ones like `http://localhost:11434/v1` for Ollama.

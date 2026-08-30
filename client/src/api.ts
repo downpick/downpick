@@ -321,6 +321,12 @@ export async function* aiChatStream(
     database: string;
     question: string;
     history: AiHistoryEntry[];
+    /**
+     * What the tab's editor held when the question was sent — the whole buffer, or just the
+     * selection. Captured here rather than fetched later because the tool that serves it runs
+     * in the main process, which has no way to reach back into the editor mid-answer.
+     */
+    editor?: { text: string; isSelection: boolean } | null;
   },
   signal?: AbortSignal,
 ): AsyncGenerator<AiStreamEvent> {

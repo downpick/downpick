@@ -7,7 +7,7 @@ import { api, ApiError } from '../api';
 import { notifyQueryFinished } from '../notifyQueryFinished';
 import { cancelTabQuery } from '../queryRun';
 import { summarizeResult } from '../summarizeResult';
-import { registerEditor, unregisterEditor, saveTabs } from '../persistence';
+import { registerEditor, unregisterEditor, saveTabs, EditorRange } from '../persistence';
 import { ConfirmDialog } from './ConfirmDialog';
 import { splitSql, statementAtOffset, SqlDialect } from '../../../server/drivers/splitSql';
 import { QUERY_TIMEOUT } from '../../../server/channels';
@@ -67,6 +67,42 @@ const MONGO_CHAIN_METHODS: { name: string; snippet: string; detail: string }[] =
 // provider can look up the right schema for whichever editor is asking for completions.
 // Populated in handleEditorMount, cleaned up on tab unmount.
 const modelConnectionMap = new Map<string, { connectionId: string; database: string }>();
+
+/**
+ * Where a selection-scoped insert from the assistant should land, or null when there is
+ * nowhere defensible to put it.
+ *
+ * The range was captured when the question was sent, and the user is free to keep typing
+ * while the answer is generated, so it is only trusted when what sits there now is one of two
+ * things: the text the assistant was shown, or the answer itself. The second case is what
+ * makes clicking Insert twice idempotent instead of destructive — after the first insert the
+ * original selection is gone from the buffer, and every looser rule would go hunting for it
+ * and come back with the wrong answer.
+ *
+ * Failing both, a single unambiguous occurrence of the original elsewhere is good enough, and
+ * after that whatever the user has selected right now. What this deliberately never does is
+ * fall back to the whole buffer: replacing an entire query with a rewritten fragment is the
+ * exact data loss this path exists to prevent.
+ */
+function resolveInsertRange(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  model: Monaco.editor.ITextModel,
+  pending: { range: EditorRange | null; expected: string | null; text: string },
+): Monaco.IRange | null {
+  const { range, expected, text } = pending;
+  if (!range || expected === null) return null;
+
+  const current = model.getValueInRange(range);
+  if (current === expected || current === text) return range;
+
+  // Limit 2 so "exactly once" is distinguishable from "more than once" — several copies of
+  // the fragment means there is no way to tell which one the user meant.
+  const matches = model.findMatches(expected, false, false, true, null, false, 2);
+  if (matches.length === 1) return matches[0].range;
+
+  const live = editor.getSelection();
+  return live && !live.isEmpty() ? live : null;
+}
 
 // Returns true if `stmt` has a WHERE keyword at the top level (depth 0), i.e. not
 // nested inside parentheses. A WHERE that only appears inside a subquery still leaves
@@ -257,6 +293,41 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     };
   }, []);
 
+  // The assistant's "Insert into editor" bumps sqlRevision. Keyed on the counter rather
+  // than the text so re-inserting the same query after the user has edited it still lands
+  // — the effect below compares values and would consider that a no-op.
+  //
+  // Declared *before* that effect on purpose: a whole-buffer insert moves tab.sql too, and
+  // whichever of the two runs first is the one that writes. This one applying first leaves
+  // lastExternalSqlRef equal to what the editor now holds, so the value-compare below sees
+  // no change and does not follow up with a setValue that would throw the undo stack away.
+  const lastRevisionRef = useRef(tab.sqlRevision ?? 0);
+  useEffect(() => {
+    const revision = tab.sqlRevision ?? 0;
+    if (revision === lastRevisionRef.current) return;
+    lastRevisionRef.current = revision;
+
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const pending = tab.pendingInsert;
+    if (!editor || !model || !pending) return;
+
+    const scoped = resolveInsertRange(editor, model, pending);
+    // A fragment answer with nowhere to go is left unapplied rather than pushed over the whole
+    // query. Only an answer written against the whole buffer replaces the whole buffer.
+    if (pending.range && !scoped) return;
+
+    // executeEdits rather than setValue so Cmd+Z takes the user back to the query they
+    // wrote — the same reason formatQuery uses it further down. Replacing a query the user
+    // spent ten minutes on is exactly when undo has to work.
+    const range = scoped ?? model.getFullModelRange();
+    editor.pushUndoStop();
+    editor.executeEdits('ai-insert', [{ range, text: pending.text }]);
+    editor.pushUndoStop();
+    lastExternalSqlRef.current = editor.getValue();
+    editor.focus();
+  }, [tab.sqlRevision, tab.pendingInsert]);
+
   // Apply external SQL changes (e.g. SchemaTree double-click) to the uncontrolled editor.
   useEffect(() => {
     if (editorRef.current && tab.sql !== lastExternalSqlRef.current) {
@@ -264,19 +335,6 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
       editorRef.current.setValue(tab.sql);
     }
   }, [tab.sql]);
-
-  // The assistant's "Insert into editor" bumps sqlRevision. Keyed on the counter rather
-  // than the text so re-inserting the same query after the user has edited it still lands
-  // — the effect above compares values and would consider that a no-op.
-  const lastRevisionRef = useRef(tab.sqlRevision ?? 0);
-  useEffect(() => {
-    const revision = tab.sqlRevision ?? 0;
-    if (revision === lastRevisionRef.current) return;
-    lastRevisionRef.current = revision;
-    lastExternalSqlRef.current = tab.sql;
-    editorRef.current?.setValue(tab.sql);
-    editorRef.current?.focus();
-  }, [tab.sqlRevision, tab.sql]);
 
   // When this tab becomes the active one it transitions from display:none → display:flex.
   // 1. layout() — automaticLayout uses a ResizeObserver that can lag one frame; calling
@@ -493,9 +551,30 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     (editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeof Monaco) => {
       editorRef.current = editor;
 
-      // Expose this editor's live value so tab persistence can capture in-progress
-      // edits when the user leaves the app (the editor is otherwise uncontrolled).
-      registerEditor(tab.id, () => editor.getValue());
+      // Expose this editor's live state so tab persistence can capture in-progress edits
+      // when the user leaves the app (the editor is otherwise uncontrolled), and so Ask AI
+      // can read the query the user is actually looking at — selection included, since a
+      // question about "this" usually means the part they highlighted.
+      registerEditor(tab.id, () => {
+        const selection = selectionRef.current;
+        const selected =
+          selection && !selection.isEmpty()
+            ? (editor.getModel()?.getValueInRange(selection) ?? '')
+            : '';
+        return {
+          text: editor.getValue(),
+          selectedText: selected || null,
+          selectionRange:
+            selected && selection
+              ? {
+                  startLineNumber: selection.startLineNumber,
+                  startColumn: selection.startColumn,
+                  endLineNumber: selection.endLineNumber,
+                  endColumn: selection.endColumn,
+                }
+              : null,
+        };
+      });
 
       // Persist edited SQL as the user types (debounced). This writes only to
       // localStorage via saveTabs — no Zustand set(), so it doesn't trigger the

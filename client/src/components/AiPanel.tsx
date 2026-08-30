@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { aiChatStream, api, AiHistoryEntry, AiHistoryMessage } from '../api';
 import { AiMessage, emptyAiChat, Tab, useStore } from '../store';
+import { getEditorSnapshot } from '../persistence';
 import { AiHistoryList } from './AiHistoryList';
 import { IS_MAC } from '../platform';
 
@@ -15,6 +16,8 @@ const MONGO_CHIPS = [
   'Count documents by status',
   'Fields in the users collection',
 ];
+/** Offered ahead of those when there is already something in the editor to talk about. */
+const EDITOR_CHIPS = ['Explain this query', 'Review this query for problems'];
 
 /** How long the "Inserted ✓" confirmation stays up. */
 const INSERTED_FLASH_MS = 2400;
@@ -295,6 +298,25 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
         .filter((m) => !m.isError)
         .map((m) => ({ role: m.role, text: m.text, sql: m.sql ?? null }));
 
+      // Captured now rather than fetched later: read_editor runs in the main process, which
+      // has no way to reach back into a renderer-side Monaco instance mid-answer. Sending it
+      // up front costs nothing unless the model actually asks for it.
+      //
+      // A selection wins over the buffer — a question asked with something highlighted is
+      // about the highlighted part, the same rule Run already follows.
+      const snapshot = getEditorSnapshot(tab.id);
+      const selection =
+        snapshot?.selectedText?.trim() && snapshot.selectionRange
+          ? { text: snapshot.selectedText, range: snapshot.selectionRange }
+          : null;
+      const editorText = selection ? selection.text : (snapshot?.text ?? '');
+      const editor = editorText.trim()
+        ? { text: editorText, isSelection: selection !== null }
+        : null;
+      // Carried onto the answer so inserting it replaces the fragment it was written against
+      // rather than the whole buffer, which would delete everything around it.
+      const insertTarget = selection ? { range: selection.range, expected: selection.text } : null;
+
       updateAiChat(tab.id, (c) => ({
         messages: [...c.messages, { id: newMessageId(), role: 'user' as const, text: trimmed }],
         draft: '',
@@ -319,7 +341,15 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
       try {
         let answered = false;
         for await (const event of aiChatStream(
-          { providerId, model, connectionId: tab.connectionId, database: tab.database, question: trimmed, history },
+          {
+            providerId,
+            model,
+            connectionId: tab.connectionId,
+            database: tab.database,
+            question: trimmed,
+            history,
+            editor,
+          },
           controller.signal,
         )) {
           if (event.type === 'step') {
@@ -332,6 +362,8 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
               text: event.note,
               sql: event.sql,
               trace: event.trace,
+              // Only means anything when there is something to insert.
+              insertTarget: event.sql ? insertTarget : null,
             });
           } else {
             answered = true;
@@ -369,7 +401,7 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
   const handleInsert = useCallback(
     (message: AiMessage) => {
       if (!message.sql) return;
-      insertAiSql(tab.id, message.id, message.sql);
+      insertAiSql(tab.id, message.id, message.sql, message.insertTarget ?? null);
       setTimeout(() => clearInsertedFlag(tab.id, message.id), INSERTED_FLASH_MS);
     },
     [tab.id, insertAiSql, clearInsertedFlag],
@@ -432,7 +464,13 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
     [tab.id, tab.connectionName, tab.database, findTabForConversation, setActiveTab, loadAiChat],
   );
 
-  const chips = connType === 'mongodb' ? MONGO_CHIPS : SQL_CHIPS;
+  const baseChips = connType === 'mongodb' ? MONGO_CHIPS : SQL_CHIPS;
+  // Read live rather than from tab.sql, which lags behind an uncontrolled Monaco while the
+  // user types. An empty tab and a tab holding a half-written query want different starting
+  // points, and the chips only show on a fresh conversation, so this is read at the one
+  // moment it matters.
+  const hasEditorContent = (getEditorSnapshot(tab.id)?.text ?? tab.sql).trim().length > 0;
+  const chips = hasEditorContent ? [...EDITOR_CHIPS, baseChips[0]] : baseChips;
 
   // Nothing said yet, nothing in flight. Both the intro blurb and the starter chips are
   // cold-start scaffolding — once there is a conversation to read they are in the way, and
@@ -453,7 +491,9 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
         <Sparkle className={`w-4 h-4 text-accent flex-shrink-0 ${IS_MAC ? 'drag-region' : ''}`} />
         <div className={`flex-1 min-w-0 ${IS_MAC ? 'drag-region' : ''}`}>
           <p className="text-xs font-semibold text-text m-0">Ask AI</p>
-          <p className="text-[11px] text-text-dim m-0">Reads your schema · never runs queries</p>
+          <p className="text-[11px] text-text-dim m-0">
+            Reads your schema and editor · never runs queries
+          </p>
         </div>
         <button
           className={`flex items-center justify-center px-1 ${
@@ -550,8 +590,9 @@ export function AiPanel({ tab, width, hidden }: { tab: Tab; width: number; hidde
               {isFresh && (
                 <p className="text-[11.5px] text-text-dim leading-relaxed m-0">
                   Ask a question about your data. I can see the tables, columns, and schemas
-                  you&rsquo;re connected to — I only write queries into the editor for you to
-                  review and run.
+                  you&rsquo;re connected to, and I can read the query open in this tab &mdash;
+                  select part of it first to ask about just that. I only write queries into the
+                  editor for you to review and run.
                 </p>
               )}
             </>

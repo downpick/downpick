@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractQuery, runAgent } from './agent';
 import { AiRequestError, resolveBaseUrl } from './net';
-import { createSchemaToolset } from './tools';
+import { createSchemaToolset, MAX_EDITOR_CHARS } from './tools';
 import { ChatAdapter, CompletionRequest, CompletionResult } from './types';
 import { Driver, SchemaTree } from '../drivers/types';
 
@@ -226,6 +226,101 @@ test('an unknown tool name is answered, not thrown', async () => {
   const toolset = createSchemaToolset(stubDriver(), 'postgres', 'analytics');
   const outcome = await toolset.run({ id: 'c1', name: 'run_query', args: {} });
   assert.match(outcome.content, /no tool called "run_query"/);
+});
+
+test('read_editor hands back the whole buffer when nothing is selected', async () => {
+  const toolset = createSchemaToolset(stubDriver(), 'postgres', 'analytics', {
+    text: 'SELECT * FROM orders;',
+    isSelection: false,
+  });
+
+  assert.deepEqual(
+    toolset.specs.map((s) => s.name),
+    ['list_schemas', 'list_tables', 'describe_tables', 'read_editor'],
+  );
+
+  const outcome = await toolset.run({ id: 'c1', name: 'read_editor', args: {} });
+  assert.equal(outcome.label, 'Reading the editor');
+  assert.match(outcome.content, /SELECT \* FROM orders;/);
+  assert.match(outcome.content, /full contents/);
+});
+
+test('read_editor hands back only the selection, and says so', async () => {
+  const toolset = createSchemaToolset(stubDriver(), 'postgres', 'analytics', {
+    text: 'SUM(total) AS revenue',
+    isSelection: true,
+  });
+
+  const outcome = await toolset.run({ id: 'c1', name: 'read_editor', args: {} });
+  assert.equal(outcome.label, 'Reading the selected query');
+  assert.match(outcome.content, /SUM\(total\) AS revenue/);
+  // The model has to know it is looking at a fragment: an edit that rewrites the surrounding
+  // query would be inserted over the selection alone and lose the rest.
+  assert.match(outcome.content, /Nothing outside it is shown/);
+  assert.match(outcome.content, /only this fragment/);
+});
+
+test('an empty tab is not offered a read_editor tool at all', async () => {
+  // A tool that can only answer "nothing here" is a round-trip spent learning nothing, so
+  // the honest signal on an untouched tab is that it does not exist.
+  const toolset = createSchemaToolset(stubDriver(), 'postgres', 'analytics');
+  assert.equal(
+    toolset.specs.some((s) => s.name === 'read_editor'),
+    false,
+  );
+
+  const outcome = await toolset.run({ id: 'c1', name: 'read_editor', args: {} });
+  assert.match(outcome.content, /no tool called "read_editor"/);
+});
+
+test('a buffer larger than the cap is truncated with the overflow named', async () => {
+  const text = 'x'.repeat(MAX_EDITOR_CHARS + 500);
+  const toolset = createSchemaToolset(stubDriver(), 'postgres', 'analytics', {
+    text,
+    isSelection: false,
+  });
+
+  const outcome = await toolset.run({ id: 'c1', name: 'read_editor', args: {} });
+  assert.match(outcome.content, /truncated, 500 more characters/);
+  assert.equal(outcome.content.includes(text), false);
+});
+
+test('the prompt tells the model the editor is worth reading, without quoting it', async () => {
+  const adapter = scriptedAdapter([{ text: 'It totals orders by month.', toolCalls: [] }]);
+  const secret = 'SELECT * FROM "public"."orders"';
+
+  await runAgent({
+    ...baseRequest(adapter, stubDriver()),
+    question: 'what does this query do?',
+    toolset: createSchemaToolset(stubDriver(), 'postgres', 'analytics', {
+      text: secret,
+      isSelection: false,
+    }),
+    editor: { lines: 1, isSelection: false },
+  });
+
+  const system = adapter.calls[0].system;
+  assert.match(system, /read_editor/);
+  assert.match(system, /1 line/);
+  // Presence, not content: the query itself costs tokens only if the model asks for it.
+  assert.equal(system.includes(secret), false);
+
+  // read_editor is where an edit starts, not the whole of it. Worded as "call read_editor
+  // before answering anything that asks for an edit", models took it for the complete recipe
+  // and rewrote queries straight out of the buffer, inventing column names on the way.
+  assert.match(system, /Start with read_editor/);
+  assert.match(system, /where the work\s+starts, never the whole of it/);
+  assert.match(system, /not when\s+editing one that already exists/);
+});
+
+test('a question about an existing query may be answered in prose alone', async () => {
+  // The counterpart to the clarifying-question case: an explanation is a complete answer, and
+  // a fence there would offer to replace a query the user never asked to change.
+  const { note, sql } = extractQuery(
+    'It totals each order and keeps only the ones above 100, newest first.',
+  );
+  assert.equal(sql, null);
+  assert.equal(note, 'It totals each order and keeps only the ones above 100, newest first.');
 });
 
 test('extractQuery takes the longest fence and strips it from the note', () => {
