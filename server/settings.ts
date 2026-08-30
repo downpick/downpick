@@ -13,10 +13,19 @@ export interface AppSettings {
   queryTimeoutSeconds: number;
   /** Minutes of API inactivity before the vault re-locks. 0 disables it. */
   autoLockMinutes: number;
+  /** Announce a finished query — natively when the window is in the background. */
+  notifyOnQueryFinish: boolean;
+  /**
+   * How long a query must have run to be worth announcing. Queries that come back before this
+   * are ones the user watched finish, and a notification for them is only noise.
+   */
+  notifyAfterSeconds: number;
 }
 
 export const DEFAULT_QUERY_TIMEOUT_SECONDS = 30;
 export const DEFAULT_AUTO_LOCK_MINUTES = 0;
+export const DEFAULT_NOTIFY_ON_QUERY_FINISH = true;
+export const DEFAULT_NOTIFY_AFTER_SECONDS = 10;
 
 function ensureDir() {
   ensureSecureDir(DOWNPICK_DIR);
@@ -27,11 +36,17 @@ function parseNonNegativeInt(value: unknown, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
 
+function parseBool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 function defaults(): AppSettings {
   return {
     vaultFilePath: DEFAULT_VAULT_PATH,
     queryTimeoutSeconds: DEFAULT_QUERY_TIMEOUT_SECONDS,
     autoLockMinutes: DEFAULT_AUTO_LOCK_MINUTES,
+    notifyOnQueryFinish: DEFAULT_NOTIFY_ON_QUERY_FINISH,
+    notifyAfterSeconds: DEFAULT_NOTIFY_AFTER_SECONDS,
   };
 }
 
@@ -48,6 +63,8 @@ export function loadSettings(): AppSettings {
       vaultFilePath: str(raw?.vaultFilePath, DEFAULT_VAULT_PATH),
       queryTimeoutSeconds: parseNonNegativeInt(raw?.queryTimeoutSeconds, DEFAULT_QUERY_TIMEOUT_SECONDS),
       autoLockMinutes: parseNonNegativeInt(raw?.autoLockMinutes, DEFAULT_AUTO_LOCK_MINUTES),
+      notifyOnQueryFinish: parseBool(raw?.notifyOnQueryFinish, DEFAULT_NOTIFY_ON_QUERY_FINISH),
+      notifyAfterSeconds: parseNonNegativeInt(raw?.notifyAfterSeconds, DEFAULT_NOTIFY_AFTER_SECONDS),
     };
   } catch {
     return defaults();

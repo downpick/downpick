@@ -9,6 +9,7 @@ import { ResultsGrid } from './components/ResultsGrid';
 import { SettingsDialog } from './components/SettingsDialog';
 import { AiPanel } from './components/AiPanel';
 import { StatusBar } from './components/StatusBar';
+import { ToastHost } from './components/ToastHost';
 import { Icon } from './components/Icon';
 import Logo from './components/Logo';
 import { IS_MAC } from './platform';
@@ -247,6 +248,17 @@ export default function App() {
     });
   }, [vaultUnlocked, lockVault, setShowConnectionDialog, openSettings]);
 
+  // Clicking a native "query finished" notification brings the window forward (main does
+  // that part) and lands here to open the tab the query came from. Same vault guard as the
+  // menu effect above, and for the same reason: this sits above the lock gate.
+  useEffect(() => {
+    return window.downpick.onQueryNotificationClick(({ tabId }) => {
+      if (!vaultUnlocked) return;
+      // The tab may have been closed while the query was still running.
+      if (useStore.getState().tabs.some((t) => t.id === tabId)) setActiveTab(tabId);
+    });
+  }, [vaultUnlocked, setActiveTab]);
+
   // Flush open tabs to localStorage when the user leaves, so in-progress (uncommitted)
   // editor edits are captured. The store subscription already saves structural changes;
   // this catches the latest SQL via the editor registry inside saveTabs().
@@ -469,6 +481,7 @@ export default function App() {
       </div>
 
       <StatusBar onLockVault={() => void lockVault()} />
+      <ToastHost />
     </div>
   );
 }

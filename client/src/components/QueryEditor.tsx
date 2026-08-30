@@ -3,11 +3,14 @@ import MonacoEditor from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { format } from 'sql-formatter';
 import { useStore, Tab } from '../store';
-import { api } from '../api';
+import { api, ApiError } from '../api';
+import { notifyQueryFinished } from '../notifyQueryFinished';
 import { cancelTabQuery } from '../queryRun';
+import { summarizeResult } from '../summarizeResult';
 import { registerEditor, unregisterEditor, saveTabs } from '../persistence';
 import { ConfirmDialog } from './ConfirmDialog';
 import { splitSql, statementAtOffset, SqlDialect } from '../../../server/drivers/splitSql';
+import { QUERY_TIMEOUT } from '../../../server/channels';
 
 interface QueryEditorProps {
   tab: Tab;
@@ -351,20 +354,37 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
       // the tab so the Cancel button in the results pane can reach it too.
       const queryId = crypto.randomUUID();
 
+      // Wall-clock, not `result.executionTime`: what decides whether this run is worth
+      // announcing is how long the user waited, which includes the round trip and — for a
+      // timeout — a run that never produced an executionTime at all.
+      const startedAt = Date.now();
+      // Only the fields the notice needs, so the callback does not have to depend on the whole
+      // `tab` prop — that object is replaced on every store update, and this closure is held
+      // in a ref that the toolbar, F5, and the menu all fire through.
+      const origin = { id: tab.id, connectionName: tab.connectionName, database: tab.database };
+
       // Clears the previous result and starts the timer.
       useStore.getState().beginTabRun(tab.id, queryId);
 
       try {
         const result = await api.query(tab.connectionId, tab.database, sql, queryId);
         useStore.getState().setTabResult(tab.id, result);
+        void notifyQueryFinished(origin, 'success', Date.now() - startedAt, summarizeResult(result));
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Query failed';
         const raw = e instanceof Error ? (e as Error & { line?: number }).line : undefined;
         const line = raw === undefined ? undefined : raw + lineOffset;
         useStore.getState().setTabError(tab.id, line ? `Line ${line}: ${message}` : message);
+
+        // Only the timeout. A rejected query already put its message in the results pane
+        // with the user right there to read it, and a cancel was the user's own doing —
+        // neither is news worth interrupting them for.
+        if ((e as ApiError).code === QUERY_TIMEOUT) {
+          void notifyQueryFinished(origin, 'timeout', Date.now() - startedAt, message);
+        }
       }
     },
-    [tab.id, tab.connectionId, tab.database, askConfirm, connType],
+    [tab.id, tab.connectionId, tab.connectionName, tab.database, askConfirm, connType],
   );
 
   const runQuery = useCallback(async () => {

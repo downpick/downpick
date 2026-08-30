@@ -192,7 +192,26 @@ export interface ConnectionError {
 }
 
 /** A pane in the Settings dialog's left rail. */
-export type SettingsSection = 'general' | 'security' | 'ai';
+export type SettingsSection = 'general' | 'notifications' | 'security' | 'ai';
+
+/**
+ * A transient in-app notice.
+ *
+ * The counterpart to a native desktop notification: main shows one of those when the window
+ * is in the background, and tells the renderer to show one of these when it is not — see
+ * `notifyQueryFinished`. Never both for the same event.
+ */
+export interface Toast {
+  id: string;
+  kind: 'info' | 'warning';
+  title: string;
+  body: string;
+  /** The tab it came from, if any. Clicking the toast brings that tab forward. */
+  tabId?: string;
+}
+
+/** More than this on screen at once is a wall, not a notice. Oldest goes. */
+const MAX_TOASTS = 3;
 
 interface AppState {
   savedConnections: SavedConnection[];
@@ -238,6 +257,11 @@ interface AppState {
   /** Which Settings section to open on — the AI panel's empty state jumps straight to 'ai'. */
   settingsTab: SettingsSection;
   openSettings: (tab?: SettingsSection) => void;
+
+  // Transient notices, newest last.
+  toasts: Toast[];
+  pushToast: (toast: Omit<Toast, 'id'>) => void;
+  dismissToast: (id: string) => void;
 
   // Ask AI
   aiPanelOpen: boolean;
@@ -553,6 +577,13 @@ export const useStore = create<AppState>((set, get) => ({
   setShowSettingsDialog: (show) => set({ showSettingsDialog: show }),
   settingsTab: 'general',
   openSettings: (tab = 'general') => set({ showSettingsDialog: true, settingsTab: tab }),
+
+  toasts: [],
+  pushToast: (toast) =>
+    set((s) => ({
+      toasts: [...s.toasts, { ...toast, id: crypto.randomUUID() }].slice(-MAX_TOASTS),
+    })),
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   aiPanelOpen: false,
   setAiPanelOpen: (open) => set({ aiPanelOpen: open }),

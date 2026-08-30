@@ -4,6 +4,7 @@ import { dispatch } from '../server/dispatch';
 import { cancelAllAiStreams, setAiStreamEmitter } from '../server/handlers/ai';
 import { registerClipboardHandlers } from './clipboard';
 import { registerFileHandlers } from './files';
+import { registerNotificationHandlers } from './notifications';
 
 /**
  * The whole main↔renderer bridge: one `handle` that forwards to the core dispatcher, plus
@@ -15,6 +16,7 @@ import { registerFileHandlers } from './files';
 export function registerIpc(): void {
   registerFileHandlers();
   registerClipboardHandlers();
+  registerNotificationHandlers();
 
   ipcMain.handle(IPC_INVOKE, async (_event, channel: string, payload: unknown) =>
     // Note the absence of a try/catch: `dispatch` returns failures as envelopes rather than

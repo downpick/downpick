@@ -7,6 +7,7 @@ import * as vault from '../vault/store';
 
 const MAX_QUERY_TIMEOUT_SECONDS = 3600;
 const MAX_AUTO_LOCK_MINUTES = 1440;
+const MAX_NOTIFY_AFTER_SECONDS = 3600;
 
 export interface ValidationResult {
   fileExists: boolean;
@@ -89,6 +90,8 @@ export function registerSettingsHandlers(): void {
       defaultVaultPath: DEFAULT_VAULT_PATH,
       queryTimeoutSeconds: settings.queryTimeoutSeconds,
       autoLockMinutes: settings.autoLockMinutes,
+      notifyOnQueryFinish: settings.notifyOnQueryFinish,
+      notifyAfterSeconds: settings.notifyAfterSeconds,
       ...validateVaultFile(settings.vaultFilePath),
     };
   });
@@ -99,10 +102,14 @@ export function registerSettingsHandlers(): void {
       vaultFilePath,
       queryTimeoutSeconds,
       autoLockMinutes,
+      notifyOnQueryFinish,
+      notifyAfterSeconds,
     }: {
       vaultFilePath: string;
       queryTimeoutSeconds?: number;
       autoLockMinutes?: number;
+      notifyOnQueryFinish?: boolean;
+      notifyAfterSeconds?: number;
     }) => {
       if (!vaultFilePath?.trim()) {
         throw new AppError(400, 'vaultFilePath is required');
@@ -126,6 +133,20 @@ export function registerSettingsHandlers(): void {
       ) {
         throw new AppError(400, `autoLockMinutes must be between 0 and ${MAX_AUTO_LOCK_MINUTES}`);
       }
+      if (notifyOnQueryFinish != null && typeof notifyOnQueryFinish !== 'boolean') {
+        throw new AppError(400, 'notifyOnQueryFinish must be a boolean');
+      }
+      if (
+        notifyAfterSeconds != null &&
+        (!Number.isFinite(notifyAfterSeconds) ||
+          notifyAfterSeconds < 0 ||
+          notifyAfterSeconds > MAX_NOTIFY_AFTER_SECONDS)
+      ) {
+        throw new AppError(
+          400,
+          `notifyAfterSeconds must be between 0 and ${MAX_NOTIFY_AFTER_SECONDS}`,
+        );
+      }
 
       const current = loadSettings();
       const next = {
@@ -133,6 +154,8 @@ export function registerSettingsHandlers(): void {
         vaultFilePath,
         queryTimeoutSeconds: queryTimeoutSeconds ?? current.queryTimeoutSeconds,
         autoLockMinutes: autoLockMinutes ?? current.autoLockMinutes,
+        notifyOnQueryFinish: notifyOnQueryFinish ?? current.notifyOnQueryFinish,
+        notifyAfterSeconds: notifyAfterSeconds ?? current.notifyAfterSeconds,
       };
       saveSettings(next);
 

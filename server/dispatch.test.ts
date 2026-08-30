@@ -35,10 +35,10 @@ async function ok<T>(channel: string, payload?: unknown): Promise<T> {
 async function fails(
   channel: string,
   payload?: unknown,
-): Promise<{ status: number; error: string; line?: number }> {
+): Promise<{ status: number; error: string; line?: number; code?: string }> {
   const envelope = await dispatch(channel, payload);
   assert.equal(envelope.ok, false, `${channel} unexpectedly succeeded`);
-  return envelope as { ok: false; status: number; error: string; line?: number };
+  return envelope as { ok: false; status: number; error: string; line?: number; code?: string };
 }
 
 before(() => {
@@ -48,7 +48,13 @@ before(() => {
 test('every declared channel has a handler', () => {
   const registered = new Set(registeredChannels());
   // These live in the Electron layer, which this suite deliberately does not load.
-  const electronOnly = new Set<string>(['files:save', 'files:pickVault', 'clipboard:write']);
+  const electronOnly = new Set<string>([
+    'files:save',
+    'files:pickVault',
+    'clipboard:write',
+    'notify:queryFinished',
+    'notify:test',
+  ]);
   const missing = CHANNELS.filter((c) => !electronOnly.has(c) && !registered.has(c));
   assert.deepEqual(missing, [], 'channels declared but never wired');
 });
@@ -189,6 +195,117 @@ test('a query error carries the line it failed on', async () => {
   } finally {
     connections.activeConnections.delete(key);
   }
+});
+
+test('a timed-out query is tagged, so the UI can tell it from a rejected one', async () => {
+  const connections = require('./handlers/connections') as typeof import('./handlers/connections');
+  const { QUERY_TIMEOUT } = require('./channels') as typeof import('./channels');
+  const key = 'timeout-test::db';
+  connections.activeConnections.set(key, {
+    async testConnection() {},
+    async getDatabases() {
+      return ['db'];
+    },
+    // Hangs until something cancels it, which is what a query the user is waiting on does.
+    executeQuery(_sql: string, onCancel?: (cancel: () => void) => void) {
+      return new Promise((_resolve, reject) => {
+        onCancel?.(() => reject(new Error('Query cancelled')));
+      });
+    },
+    async getSchemaTree() {
+      return { databases: [] };
+    },
+    async close() {},
+  } as never);
+
+  const restore = await ok<{ queryTimeoutSeconds: number }>('settings:get');
+  try {
+    await ok('settings:update', { vaultFilePath: VAULT_PATH, queryTimeoutSeconds: 1 });
+
+    const res = await fails('query:run', {
+      connectionId: 'timeout-test',
+      database: 'db',
+      sql: 'SELECT pg_sleep(60)',
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.error, /timed out/);
+    // The tag, not the wording, is what the notification path branches on.
+    assert.equal(res.code, QUERY_TIMEOUT);
+  } finally {
+    await ok('settings:update', {
+      vaultFilePath: VAULT_PATH,
+      queryTimeoutSeconds: restore.queryTimeoutSeconds,
+    });
+    connections.activeConnections.delete(key);
+  }
+});
+
+test('an ordinary query error carries no timeout tag', async () => {
+  const connections = require('./handlers/connections') as typeof import('./handlers/connections');
+  const key = 'plain-error::db';
+  connections.activeConnections.set(key, {
+    async testConnection() {},
+    async getDatabases() {
+      return ['db'];
+    },
+    async executeQuery() {
+      throw new Error('relation "nope" does not exist');
+    },
+    async getSchemaTree() {
+      return { databases: [] };
+    },
+    async close() {},
+  } as never);
+
+  try {
+    const res = await fails('query:run', {
+      connectionId: 'plain-error',
+      database: 'db',
+      sql: 'SELECT * FROM nope',
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.code, undefined, 'a rejected query must not read as a timeout');
+  } finally {
+    connections.activeConnections.delete(key);
+  }
+});
+
+test('notification settings round-trip, and out-of-range values are refused', async () => {
+  const before = await ok<{ notifyOnQueryFinish: boolean; notifyAfterSeconds: number }>(
+    'settings:get',
+  );
+  // The defaults the feature ships with: announce finished queries, but only slow ones.
+  assert.equal(before.notifyOnQueryFinish, true);
+  assert.equal(before.notifyAfterSeconds, 10);
+
+  await ok('settings:update', {
+    vaultFilePath: VAULT_PATH,
+    notifyOnQueryFinish: false,
+    notifyAfterSeconds: 45,
+  });
+  const after = await ok<{ notifyOnQueryFinish: boolean; notifyAfterSeconds: number }>(
+    'settings:get',
+  );
+  assert.equal(after.notifyOnQueryFinish, false);
+  assert.equal(after.notifyAfterSeconds, 45);
+
+  const tooLong = await fails('settings:update', {
+    vaultFilePath: VAULT_PATH,
+    notifyAfterSeconds: 99_999,
+  });
+  assert.equal(tooLong.status, 400);
+  assert.match(tooLong.error, /notifyAfterSeconds/);
+
+  // An omitted field must leave the stored one alone, not reset it to the default.
+  await ok('settings:update', { vaultFilePath: VAULT_PATH, queryTimeoutSeconds: 30 });
+  const untouched = await ok<{ notifyAfterSeconds: number }>('settings:get');
+  assert.equal(untouched.notifyAfterSeconds, 45);
+
+  await ok('settings:update', {
+    vaultFilePath: VAULT_PATH,
+    notifyOnQueryFinish: before.notifyOnQueryFinish,
+    notifyAfterSeconds: before.notifyAfterSeconds,
+  });
 });
 
 test('stores AI provider keys in the vault and never hands them back', async () => {

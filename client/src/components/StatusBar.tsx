@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { QueryResult, useStore } from '../store';
+import { useStore } from '../store';
 import { copyResult, exportCsv, exportXlsx } from '../resultExport';
-import { formatDuration } from '../formatDuration';
+import { summarizeResult } from '../summarizeResult';
 import { ElapsedTime } from './ElapsedTime';
 
 /**
@@ -83,7 +83,7 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
           )}
 
           <span className="text-[11px] font-mono text-text-dim flex-shrink-0">
-            {summarize(result)}
+            {summarizeResult(result)}
           </span>
 
           <span className="w-px h-3 bg-surface-2 flex-shrink-0" />
@@ -193,22 +193,6 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
       </button>
     </div>
   );
-}
-
-/**
- * The one-line verdict on a finished run.
- *
- * "rows" and "rows affected" are different facts that used to print as the same one: an
- * UPDATE read "5 rows" above an empty grid on PostgreSQL, and "0 rows" on SQL Server.
- */
-function summarize(result: QueryResult): string {
-  const time = formatDuration(result.executionTime);
-  if (result.columns.length > 0) return `${result.rowCount} rows · ${time}`;
-  if (result.rowsAffected != null) {
-    const rows = result.rowsAffected === 1 ? 'row' : 'rows';
-    return `${result.rowsAffected} ${rows} affected · ${time}`;
-  }
-  return `Completed · ${time}`;
 }
 
 /**

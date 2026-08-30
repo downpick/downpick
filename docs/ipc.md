@@ -27,7 +27,7 @@ stored password or API key.
 | `query:cancel` | Cancel an in-flight query by its queryId |
 | `schema:get` | Fetch the schema tree for an open database |
 | `settings:get` | Get current settings + vault file validation |
-| `settings:update` | Update settings (vault file path, query timeout, auto-lock) |
+| `settings:update` | Update settings (vault file path, query timeout, auto-lock, notifications) |
 | `settings:validate` | Validate a candidate vault file path |
 | `ai:providers:list` | The provider catalog plus configured providers, never their keys |
 | `ai:providers:add` | Add a provider and its API key |
@@ -43,15 +43,18 @@ stored password or API key.
 | `ai:history:clear` | Delete every saved conversation |
 | `files:save` | Show the native save dialog and write a file (CSV/XLSX export) |
 | `files:pickVault` | Show the native file dialog to open or place a vault file, and validate what came back |
+| `clipboard:write` | Put a result set on the system clipboard, as HTML and as plain text |
+| `notify:queryFinished` | Report a finished query. Main decides whether to show a native notification, ask the renderer for an in-app one, or stay quiet |
 
 ## Events
 
-Two channels push the other way, from main to the renderer:
+Three channels push the other way, from main to the renderer:
 
 | Event | Description |
 |-------|-------------|
 | `ai:chat:event` | One `step`, `message`, or `error` from a running answer, tagged with its `streamId` |
 | `menu:command` | An application-menu item was activated (run/cancel/format query, lock vault) |
+| `notification:activate` | A native query notification was clicked; carries the `tabId` to bring forward |
 
 ## Reply envelopes
 

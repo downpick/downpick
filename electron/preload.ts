@@ -6,6 +6,7 @@ import type {
   EVENTS,
   IPC_INVOKE,
   MenuCommand,
+  NotificationActivateEvent,
   SaveFileRequest,
   SaveFileResult,
 } from '../server/channels';
@@ -22,12 +23,15 @@ import type {
 const INVOKE: typeof IPC_INVOKE = 'downpick:invoke';
 const AI_CHAT_EVENT: (typeof EVENTS)['aiChat'] = 'ai:chat:event';
 const MENU_COMMAND_EVENT: (typeof EVENTS)['menuCommand'] = 'menu:command';
+const NOTIFICATION_ACTIVATE_EVENT: (typeof EVENTS)['notificationActivate'] =
+  'notification:activate';
 
 export interface DownpickBridge {
   invoke<T>(channel: Channel, payload?: unknown): Promise<Envelope<T>>;
   saveFile(request: SaveFileRequest): Promise<Envelope<SaveFileResult>>;
   onAiChat(listener: (payload: AiChatEvent) => void): () => void;
   onMenuCommand(listener: (command: MenuCommand) => void): () => void;
+  onQueryNotificationClick(listener: (payload: NotificationActivateEvent) => void): () => void;
 }
 
 /** Wraps `ipcRenderer.on` so callers get an unsubscribe rather than having to mirror the args. */
@@ -44,6 +48,7 @@ const bridge: DownpickBridge = {
   saveFile: (request) => ipcRenderer.invoke(INVOKE, 'files:save', request),
   onAiChat: (listener) => subscribe(AI_CHAT_EVENT, listener),
   onMenuCommand: (listener) => subscribe(MENU_COMMAND_EVENT, listener),
+  onQueryNotificationClick: (listener) => subscribe(NOTIFICATION_ACTIVATE_EVENT, listener),
 };
 
 contextBridge.exposeInMainWorld('downpick', bridge);

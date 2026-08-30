@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, AppSettings, ValidationResult } from '../api';
+import { IS_MAC, IS_WINDOWS } from '../platform';
 import { SettingsSection, useStore } from '../store';
 import { AiProviderSettings } from './AiProviderSettings';
 
@@ -23,6 +24,12 @@ const SECTIONS: {
     description: 'How Downpick behaves between launches, and limits every query runs under.',
   },
   {
+    id: 'notifications',
+    label: 'Notifications',
+    title: 'Notifications',
+    description: 'Whether Downpick tells you a query has finished, and how loudly.',
+  },
+  {
     id: 'security',
     label: 'Security',
     title: 'Security',
@@ -35,6 +42,21 @@ const SECTIONS: {
     description: 'Providers Ask AI can use to generate queries.',
   },
 ];
+
+/**
+ * Where this OS keeps the per-app notification switch.
+ *
+ * Named rather than described, because a blocked notification is indistinguishable from a
+ * working one from inside the app — macOS swallows `show()` in silence when the app is
+ * denied — so the only help worth offering is the exact place to go and look.
+ */
+const OS_NOTIFICATION_SETTINGS = IS_MAC
+  ? 'System Settings ▸ Notifications'
+  : IS_WINDOWS
+    ? 'Settings ▸ System ▸ Notifications'
+    : "your desktop's notification settings";
+
+type TestStatus = 'idle' | 'sending' | 'sent' | 'unsupported' | 'error';
 
 function StatusBadge({ status }: { status: Status }) {
   if (status.state === 'idle') return null;
@@ -58,6 +80,32 @@ function StatusBadge({ status }: { status: Status }) {
   );
 }
 
+/**
+ * What came of the test button.
+ *
+ * "Sent" is as far as the app can honestly go: the OS reports nothing back when it decides
+ * not to show a notification, so the only truthful follow-up is to ask. What to do about a
+ * "no" is in the paragraph right above the button — repeating it here would say the same
+ * thing twice and crowd the button off its own line.
+ */
+function TestStatusNote({ status }: { status: TestStatus }) {
+  if (status === 'idle') return null;
+  if (status === 'sending') return <span className="text-xs text-text-dim">Sending…</span>;
+  if (status === 'unsupported') {
+    return (
+      <span className="text-xs text-warning">⚠ This system has no notification support</span>
+    );
+  }
+  if (status === 'error') {
+    return <span className="text-xs text-warning">⚠ Could not send it</span>;
+  }
+  return (
+    <span className="text-xs text-text-dim">
+      Sent — did it appear?
+    </span>
+  );
+}
+
 export function SettingsDialog({
   onClose,
   onChangeMasterPassword,
@@ -77,6 +125,9 @@ export function SettingsDialog({
   // checkbox participates in the dialog's dirty/Save flow like the path field.
   const [pendingPersistTabs, setPendingPersistTabs] = useState(persistTabs);
   const [timeoutInput, setTimeoutInput] = useState('');
+  const [pendingNotify, setPendingNotify] = useState(true);
+  const [notifyAfterInput, setNotifyAfterInput] = useState('');
+  const [testStatus, setTestStatus] = useState<TestStatus>('idle');
   const [autoLockInput, setAutoLockInput] = useState('');
   const [status, setStatus] = useState<Status>({ state: 'idle' });
   const [saving, setSaving] = useState(false);
@@ -89,6 +140,8 @@ export function SettingsDialog({
       setSettings(s);
       setInputPath(s.vaultFilePath);
       setTimeoutInput(String(s.queryTimeoutSeconds));
+      setPendingNotify(s.notifyOnQueryFinish);
+      setNotifyAfterInput(String(s.notifyAfterSeconds));
       setAutoLockInput(String(s.autoLockMinutes));
       // Show initial validation state from server
       applyValidation(s);
@@ -150,12 +203,33 @@ export function SettingsDialog({
     }
   }
 
+  /**
+   * Raise a notification on demand. There is nothing to assert about the result: a denied
+   * notification is swallowed by the OS without an error, so all this can honestly report is
+   * that it was handed over — the user's own screen is the assertion.
+   */
+  async function sendTestNotification() {
+    setTestStatus('sending');
+    try {
+      const { supported } = await api.sendTestNotification();
+      setTestStatus(supported ? 'sent' : 'unsupported');
+    } catch {
+      setTestStatus('error');
+    }
+  }
+
   function resetToDefault() {
     if (settings) handlePathChange(settings.defaultVaultPath);
   }
 
   const parsedTimeout = Number(timeoutInput.trim());
   const timeoutValid = Number.isInteger(parsedTimeout) && parsedTimeout >= 0 && parsedTimeout <= 3600;
+  const parsedNotifyAfter = Number(notifyAfterInput.trim());
+  // Only gates Save while notifications are on: a stale number behind a switched-off toggle
+  // is not something to stop the user over.
+  const notifyAfterValid =
+    !pendingNotify ||
+    (Number.isInteger(parsedNotifyAfter) && parsedNotifyAfter >= 0 && parsedNotifyAfter <= 3600);
   const parsedAutoLock = Number(autoLockInput.trim());
   const autoLockValid =
     Number.isInteger(parsedAutoLock) && parsedAutoLock >= 0 && parsedAutoLock <= 1440;
@@ -163,7 +237,7 @@ export function SettingsDialog({
 
   async function handleSave() {
     const trimmed = inputPath.trim();
-    if (!trimmed || !timeoutValid || !autoLockValid) return;
+    if (!trimmed || !timeoutValid || !autoLockValid || !notifyAfterValid) return;
 
     setSaving(true);
     setSaveError(null);
@@ -175,9 +249,24 @@ export function SettingsDialog({
       const pathChanged = settings != null && trimmed !== settings.vaultFilePath;
       const timeoutChanged = settings != null && parsedTimeout !== settings.queryTimeoutSeconds;
       const autoLockChanged = settings != null && parsedAutoLock !== settings.autoLockMinutes;
+      const notifyChanged = settings != null && pendingNotify !== settings.notifyOnQueryFinish;
+      // A threshold typed while the toggle is off is not worth sending, and may not even be
+      // a number — keep the stored value in that case.
+      const notifyAfter = notifyAfterValid && pendingNotify ? parsedNotifyAfter : undefined;
+      const notifyAfterChanged =
+        settings != null && notifyAfter != null && notifyAfter !== settings.notifyAfterSeconds;
       // Only hit the server when something server-side actually changed.
-      if (settings && (pathChanged || timeoutChanged || autoLockChanged)) {
-        const result = await api.updateSettings(trimmed, parsedTimeout, parsedAutoLock);
+      if (
+        settings &&
+        (pathChanged || timeoutChanged || autoLockChanged || notifyChanged || notifyAfterChanged)
+      ) {
+        const result = await api.updateSettings({
+          vaultFilePath: trimmed,
+          queryTimeoutSeconds: parsedTimeout,
+          autoLockMinutes: parsedAutoLock,
+          notifyOnQueryFinish: pendingNotify,
+          notifyAfterSeconds: notifyAfter,
+        });
         applyValidation(result);
       }
       onClose();
@@ -193,14 +282,22 @@ export function SettingsDialog({
     (inputPath.trim() !== settings.vaultFilePath ||
       pendingPersistTabs !== persistTabs ||
       parsedTimeout !== settings.queryTimeoutSeconds ||
-      parsedAutoLock !== settings.autoLockMinutes);
+      parsedAutoLock !== settings.autoLockMinutes ||
+      pendingNotify !== settings.notifyOnQueryFinish ||
+      (pendingNotify && notifyAfterValid && parsedNotifyAfter !== settings.notifyAfterSeconds));
   const canSave =
-    pathValid && timeoutValid && autoLockValid && !saving && status.state !== 'validating';
+    pathValid &&
+    timeoutValid &&
+    autoLockValid &&
+    notifyAfterValid &&
+    !saving &&
+    status.state !== 'validating';
 
   // Save is dialog-wide, so a bad value in a pane you are not looking at still blocks it.
   // The rail carries the marker back to the pane that owns the problem.
   const invalidSections: Partial<Record<SettingsSection, boolean>> = {
     general: !timeoutValid,
+    notifications: !notifyAfterValid,
     security: !pathValid || !autoLockValid,
   };
 
@@ -296,6 +393,85 @@ export function SettingsDialog({
                     Queries running longer than this are cancelled automatically. Use 0 for no
                     limit.
                   </p>
+                </div>
+
+              </div>
+            )}
+
+            {section === 'notifications' && (
+              <div className="space-y-5 overflow-y-auto pr-1">
+                {/* When to notify */}
+                <div>
+                  <span className="text-xs text-text-muted uppercase tracking-wide">
+                    When to notify
+                  </span>
+                  <label className="flex items-start gap-2.5 mt-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 accent-accent w-4 h-4 cursor-pointer"
+                      checked={pendingNotify}
+                      onChange={(e) => setPendingNotify(e.target.checked)}
+                    />
+                    <span>
+                      <span className="text-sm text-text">Notify me when a query finishes</span>
+                      <span className="block text-xs text-text-dim mt-0.5">
+                        A system notification when Downpick is in the background, an in-app
+                        notice when it is not. A query you cancelled, or one the database
+                        rejected, is not announced — you are already looking at it.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div className="flex items-center gap-2 mt-3">
+                    <span className="text-sm text-text-dim">Only after</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={3600}
+                      step={1}
+                      className="input font-mono text-xs w-24"
+                      value={notifyAfterInput}
+                      disabled={!pendingNotify}
+                      onChange={(e) => setNotifyAfterInput(e.target.value)}
+                    />
+                    <span className="text-sm text-text-dim">seconds</span>
+                  </div>
+                  {!notifyAfterValid && (
+                    <p className="text-xs text-warning mt-1.5">
+                      ⚠ Enter a whole number between 0 and 3600
+                    </p>
+                  )}
+                  <p className="text-xs text-text-dim mt-2">
+                    Anything that finishes sooner is not announced. Use 0 to announce every
+                    query. A query stopped by the query timeout in General is always
+                    announced, however quickly it fired.
+                  </p>
+                </div>
+
+                <div className="h-px bg-surface-2" />
+
+                {/* System permission */}
+                <div>
+                  <span className="text-xs text-text-muted uppercase tracking-wide">
+                    System permission
+                  </span>
+                  <p className="text-xs text-text-dim mt-2 mb-0">
+                    {OS_NOTIFICATION_SETTINGS} has to allow notifications from Downpick as
+                    well. Downpick cannot tell whether it does — a blocked notification is
+                    turned away without an error, which is what this button is for.
+                  </p>
+                  <div className="flex items-center gap-2.5 mt-2.5">
+                    {/* Never shrink: the note beside it grows, and squeezing the button
+                        wraps its label onto a second line. */}
+                    <button
+                      className="btn-ghost flex-shrink-0 whitespace-nowrap"
+                      onClick={() => void sendTestNotification()}
+                      disabled={testStatus === 'sending'}
+                    >
+                      Send a test notification
+                    </button>
+                    <TestStatusNote status={testStatus} />
+                  </div>
                 </div>
               </div>
             )}

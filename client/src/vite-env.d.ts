@@ -5,6 +5,7 @@ import type {
   Channel,
   Envelope,
   MenuCommand,
+  NotificationActivateEvent,
   SaveFileRequest,
   SaveFileResult,
 } from '../../server/channels';
@@ -21,6 +22,9 @@ declare global {
       saveFile(request: SaveFileRequest): Promise<Envelope<SaveFileResult>>;
       onAiChat(listener: (payload: AiChatEvent) => void): () => void;
       onMenuCommand(listener: (command: MenuCommand) => void): () => void;
+      onQueryNotificationClick(
+        listener: (payload: NotificationActivateEvent) => void,
+      ): () => void;
     };
   }
 }

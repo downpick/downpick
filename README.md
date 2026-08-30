@@ -147,7 +147,7 @@ the renderer. **Fetch from API** asks the provider which models your key can act
 ## Settings
 
 Open with the **⚙** button at the right end of the status bar along the bottom of the window, or
-with `Ctrl+,` / `Cmd+,`. The dialog has three sections.
+with `Ctrl+,` / `Cmd+,`. The dialog has four sections.
 
 **General**
 
@@ -155,6 +155,14 @@ with `Ctrl+,` / `Cmd+,`. The dialog has three sections.
 |---|---|
 | **Restore open tabs on launch** | Reopens the tabs you had open last time. Turn it off if your query text is sensitive — the tabs are stored in plaintext. |
 | **Query timeout** | Cancels a query still running after this long (0–3600 seconds, default 30s, `0` for no limit). |
+
+**Notifications**
+
+| Setting | What it does |
+|---|---|
+| **Notify me when a query finishes** | Announces a finished query — a system notification when Downpick is in the background, an in-app notice when it is not, never both. A query you cancelled or one the database rejected is not announced, since you are right there either way. Clicking the system notification brings the window forward and opens the tab the query came from. |
+| **Only after _n_ seconds** | How long a query must have run to be worth announcing (0–3600 seconds, default 10s, `0` announces every query). A query stopped by the **Query timeout** in General is exempt and always announced — the point of setting that limit is to be told when it trips, and it would otherwise go silent whenever the timeout was shorter than this threshold. |
+| **Send a test notification** | Raises one on demand, ignoring both settings above. Your OS has to allow notifications from Downpick as well, and a blocked one is turned away without an error — there is no way to detect that from inside the app, so the only honest check is to fire one and look. |
 
 **Security**
 
@@ -168,8 +176,8 @@ with `Ctrl+,` / `Cmd+,`. The dialog has three sections.
 as you make it rather than on a Save button, so it has a plain **Close**. Jump straight to it with
 `Ctrl+Shift+,` / `Cmd+Shift+,`.
 
-Vault path, query timeout, and auto-lock live in `~/.downpick/settings.json`, which holds no
-secrets. Tab restoration is a renderer-side preference and is stored with the tabs themselves.
+Vault path, query timeout, notification preferences, and auto-lock live in
+`~/.downpick/settings.json`, which holds no secrets. Tab restoration is a renderer-side preference and is stored with the tabs themselves.
 Ask AI conversations are saved to `~/.downpick/chats.db`, unencrypted — see
 [SECURITY.md](SECURITY.md).
 

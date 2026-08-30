@@ -49,6 +49,8 @@ export const CHANNELS = [
   'files:save',
   'files:pickVault',
   'clipboard:write',
+  'notify:queryFinished',
+  'notify:test',
 ] as const;
 
 export type Channel = (typeof CHANNELS)[number];
@@ -90,7 +92,16 @@ export function isChannel(value: unknown): value is Channel {
  */
 export type Envelope<T> =
   | { ok: true; data: T }
-  | { ok: false; status: number; error: string; line?: number };
+  | { ok: false; status: number; error: string; line?: number; code?: string };
+
+/**
+ * `code` on a failed envelope, for the one failure the UI must recognise rather than read.
+ *
+ * A query the configured timeout cancelled comes back as a 400 like any other rejected query,
+ * so notifying on a timeout but not on a syntax error would otherwise mean matching the text
+ * of "Query timed out after 30s" — which breaks the day that sentence is reworded.
+ */
+export const QUERY_TIMEOUT = 'QUERY_TIMEOUT';
 
 /**
  * The single `ipcMain.handle` channel every call is tunnelled through.
@@ -106,6 +117,8 @@ export const EVENTS = {
   aiChat: 'ai:chat:event',
   /** A menu item was activated; the renderer routes it to the matching in-app action. */
   menuCommand: 'menu:command',
+  /** The user clicked a native query notification; the renderer brings that tab forward. */
+  notificationActivate: 'notification:activate',
 } as const;
 
 export type AiStreamEvent =
@@ -230,4 +243,56 @@ export interface PickVaultFileResult {
 export interface ClipboardWriteRequest {
   text: string;
   html?: string;
+}
+
+/**
+ * Payload for `notify:queryFinished` — "this query is done, say so if it is worth saying".
+ *
+ * The renderer reports the outcome; main decides what to do with it, because everything the
+ * decision needs lives there: the threshold in settings.json, and whether the window is
+ * actually in front of the user. The renderer cannot answer the second one honestly —
+ * `document.hasFocus()` is about the document, not about which application the user is
+ * looking at — and having it read settings just to compare a number would put the rule in
+ * two places.
+ *
+ * `detail` arrives pre-formatted rather than as raw counts so the notification body and the
+ * status bar say the same thing; both go through `summarizeResult`.
+ */
+export interface QueryFinishedNotice {
+  /** Which tab ran it, so clicking the notification can bring that tab forward. */
+  tabId: string;
+  outcome: 'success' | 'timeout';
+  connectionName: string;
+  database: string;
+  /** Wall-clock time the run took, measured around the whole call. */
+  elapsedMs: number;
+  /** "1,240 rows · 2m 13s", or the timeout message. */
+  detail: string;
+}
+
+/**
+ * What main actually did. The renderer draws its own toast only for `'toast'` — otherwise a
+ * background query would announce itself twice, once on the desktop and once behind it.
+ */
+export interface NotifyResult {
+  shown: 'native' | 'toast' | 'none';
+}
+
+/**
+ * Reply to `notify:test` — the Settings button that raises a notification on demand.
+ *
+ * `sent` only means the OS accepted it, never that the user saw it: when notifications are
+ * denied for the app, macOS swallows `show()` in silence and emits no `failed` event either,
+ * so there is nothing to report. Whether it actually appeared is a question only the person
+ * looking at the screen can answer, which is the whole reason the button exists.
+ */
+export interface TestNotificationResult {
+  /** False when this platform has no notification system at all. */
+  supported: boolean;
+  sent: boolean;
+}
+
+/** Payload of `notification:activate`. */
+export interface NotificationActivateEvent {
+  tabId: string;
 }

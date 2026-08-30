@@ -1,3 +1,4 @@
+import { QUERY_TIMEOUT } from '../channels';
 import { AppError, registerHandler } from '../dispatch';
 import { loadSettings } from '../settings';
 import { activeConnections } from './connections';
@@ -78,7 +79,12 @@ export function registerQueryHandlers(): void {
         return result;
       } catch (err: unknown) {
         if (timedOut) {
-          throw new AppError(400, `Query timed out after ${queryTimeoutSeconds}s`);
+          throw new AppError(
+            400,
+            `Query timed out after ${queryTimeoutSeconds}s`,
+            undefined,
+            QUERY_TIMEOUT,
+          );
         }
         const message = err instanceof Error ? err.message : String(err);
         throw new AppError(400, message, errorLine(sql, err));

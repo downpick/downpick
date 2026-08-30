@@ -22,12 +22,21 @@ export class AppError extends Error {
   readonly status: number;
   /** 1-based line in the submitted SQL, when the driver could pin the error to one. */
   readonly line?: number;
+  /**
+   * A stable machine-readable tag for the failures the UI has to tell apart from each other.
+   *
+   * The message alone is not enough: a query the timeout cancelled and a query the server
+   * rejected both arrive as a 400, and the only thing separating them was the wording of a
+   * string the UI would have had to pattern-match. See `QUERY_TIMEOUT` in channels.ts.
+   */
+  readonly code?: string;
 
-  constructor(status: number, message: string, line?: number) {
+  constructor(status: number, message: string, line?: number, code?: string) {
     super(message);
     this.name = 'AppError';
     this.status = status;
     this.line = line;
+    this.code = code;
   }
 }
 
@@ -59,9 +68,9 @@ function toWire<T>(value: T): unknown {
   return JSON.parse(JSON.stringify(value));
 }
 
-function describe(err: unknown): { status: number; error: string; line?: number } {
+function describe(err: unknown): { status: number; error: string; line?: number; code?: string } {
   if (err instanceof AppError) {
-    return { status: err.status, error: err.message, line: err.line };
+    return { status: err.status, error: err.message, line: err.line, code: err.code };
   }
   // Anything unplanned. Redacted because driver errors quote the connection URI they were
   // built from, password and all (see redact.ts).

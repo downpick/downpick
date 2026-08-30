@@ -7,10 +7,13 @@ import type {
   AiStreamEvent,
   Channel,
   ClipboardWriteRequest,
+  NotifyResult,
   PickVaultFileRequest,
   PickVaultFileResult,
+  QueryFinishedNotice,
   SaveFileRequest,
   StoredAiHistoryMessage,
+  TestNotificationResult,
 } from '../../server/channels';
 import type { DbType } from './store';
 
@@ -39,6 +42,8 @@ export function setLockListener(listener: LockListener): void {
 export interface ApiError extends Error {
   status?: number;
   line?: number;
+  /** Machine-readable tag for the failures the UI branches on — see QUERY_TIMEOUT. */
+  code?: string;
 }
 
 async function invoke<T>(channel: Channel, payload?: unknown): Promise<T> {
@@ -54,6 +59,7 @@ async function invoke<T>(channel: Channel, payload?: unknown): Promise<T> {
   const err: ApiError = new Error(envelope.error);
   err.status = envelope.status;
   if (envelope.line != null) err.line = envelope.line;
+  if (envelope.code != null) err.code = envelope.code;
   throw err;
 }
 
@@ -131,6 +137,8 @@ export interface AppSettings {
   defaultVaultPath: string;
   queryTimeoutSeconds: number;
   autoLockMinutes: number;
+  notifyOnQueryFinish: boolean;
+  notifyAfterSeconds: number;
   fileExists: boolean;
   valid: boolean;
   error?: string;
@@ -211,18 +219,31 @@ export const api = {
 
   // Settings
   getSettings: () => invoke<AppSettings>('settings:get'),
-  updateSettings: (
-    vaultFilePath: string,
-    queryTimeoutSeconds?: number,
-    autoLockMinutes?: number,
-  ) =>
-    invoke<{ ok: boolean } & ValidationResult>('settings:update', {
-      vaultFilePath,
-      queryTimeoutSeconds,
-      autoLockMinutes,
-    }),
+  // One object rather than positional arguments: the handler already takes a patch, and a
+  // fifth positional `boolean, number` tail would be unreadable at the call site.
+  updateSettings: (patch: {
+    vaultFilePath: string;
+    queryTimeoutSeconds?: number;
+    autoLockMinutes?: number;
+    notifyOnQueryFinish?: boolean;
+    notifyAfterSeconds?: number;
+  }) => invoke<{ ok: boolean } & ValidationResult>('settings:update', patch),
   validateSettingsPath: (path: string) =>
     invoke<ValidationResult>('settings:validate', { path }),
+  /**
+   * Report a finished query. Main decides whether it is worth announcing and how — the reply
+   * says whether the renderer still owes the user a toast.
+   */
+  notifyQueryFinished: (notice: QueryFinishedNotice) =>
+    invoke<NotifyResult>('notify:queryFinished', notice),
+
+  /**
+   * Raise a notification right now, ignoring the threshold and the enable switch. Backs the
+   * "Send a test notification" button — the only way to find out whether the OS lets them
+   * through, since a denied notification fails silently.
+   */
+  sendTestNotification: () => invoke<TestNotificationResult>('notify:test'),
+
   /** Native file dialog for choosing a vault. Answers while the vault is still locked. */
   pickVaultFile: (body: PickVaultFileRequest) =>
     invoke<PickVaultFileResult>('files:pickVault', body),

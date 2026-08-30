@@ -2,6 +2,7 @@ import { app, BrowserWindow, nativeImage, session } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { bootstrap, getVaultStatus, onVaultStatusChange, shutdown } from '../server/bootstrap';
+import { APP_USER_MODEL_ID } from './appId';
 import { attachAiStream, registerIpc } from './ipc';
 import { buildMenu } from './menu';
 import { registerAppProtocol, registerAppScheme } from './protocol';
@@ -41,6 +42,25 @@ const DEV_SERVER = devServerUrl();
  * filesystems. Must run before anything reads a path or the name.
  */
 app.setName('Downpick');
+
+/**
+ * The identity Windows files this app's toast notifications under.
+ *
+ * Windows will not raise a toast for a desktop app it cannot tie to a Start Menu shortcut
+ * carrying the same AppUserModelID. Electron sets one by itself only when it detects
+ * Squirrel; this app ships an NSIS installer and a portable build, so neither gets it for
+ * free and the notifications the query-finished feature sends would arrive unattributed —
+ * or not at all.
+ *
+ * The value lives in appId.ts, where a test holds it against `appId` in electron-builder.yml
+ * — the string the installer stamps onto the shortcut. Windows compares the two verbatim.
+ *
+ * No-op on macOS and Linux, so it is called unconditionally rather than behind a platform
+ * branch. Set here with `setName`, before any window exists — Windows reads it when the
+ * first notification is raised, and a BrowserWindow opened beforehand would already have
+ * inherited the default.
+ */
+app.setAppUserModelId(APP_USER_MODEL_ID);
 
 /**
  * The app icon as a file on disk.
