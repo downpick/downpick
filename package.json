@@ -1,7 +1,7 @@
 {
   "name": "downpick",
   "productName": "Downpick",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Standalone desktop database manager for PostgreSQL, SQL Server, Oracle, and MongoDB",
   "author": "Downpick",
   "license": "MIT",
