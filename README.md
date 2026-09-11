@@ -15,9 +15,9 @@ Download the latest build from the [releases page](https://github.com/downpick/d
 | **macOS** (Apple Silicon) | `Downpick-<version>-arm64.dmg` | Open the dmg, drag Downpick to Applications |
 | **macOS** (Intel) | `Downpick-<version>.dmg` | Same |
 | **Linux** (x64) | `Downpick-<version>.AppImage` | `chmod +x` it, then run it |
-| **Windows** (x64) | `Downpick-<version>-win.zip` | Extract anywhere, run `Downpick.exe` |
+| **Windows** (x64) | `Downpick Setup <version>.exe` | Run the installer |
 
-**The builds are unsigned**, so both desktop platforms will warn you on first launch. On macOS you
+**Builds without a trusted signing certificate** trigger a warning on first launch. On macOS you
 get *"Apple could not verify Downpick is free of malware"* — expected, since the build carries no
 Apple-issued certificate. Go to **System Settings → Privacy & Security**, scroll to Security, and
 click **Open Anyway** next to the Downpick line, then launch the app again and choose **Open**.
@@ -32,7 +32,22 @@ you have a build from before 1.1.0 — that message was a packaging bug, not a b
 there is no way past it; grab a newer release.
 
 On Windows, SmartScreen shows a blue banner — choose **More info → Run anyway**. Verify what you
-downloaded against the SHA-256 checksums published in the release notes.
+downloaded against the SHA-256 checksums attached to the release or published in its notes.
+
+### Updates
+
+Installed Windows builds, Linux AppImages, and Developer ID-signed macOS builds check for new
+stable versions after launch and every six hours, then download updates in the background.
+Choose **Restart and Update** when the download is ready, or **Later** to keep working. The app
+waits for you to finish or cancel running queries before allowing the update restart.
+
+To check manually, use **Downpick → Check for Updates…** on macOS or **Help → Check for Updates…**
+on Windows/Linux. Once downloaded, that item becomes **Restart and Update…**. Updates are not
+installed on ordinary quit when you choose Later.
+
+Unsigned/ad-hoc macOS builds and portable Windows builds offer manual downloads instead.
+Versions released before this updater was added need one manual installation to get the feature;
+Windows ZIP users should install the new Setup executable.
 
 ### From source
 

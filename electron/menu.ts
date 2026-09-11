@@ -16,7 +16,7 @@ import { EVENTS, MenuCommand } from '../server/channels';
  * menu is deliberately left alone: the unlock screen's password field needs paste.
  *
  * The whole menu is rebuilt on each change rather than toggling `enabled` by id — this
- * function is a pure function of its two arguments, and keeping it that way is cheaper to
+ * function is a pure function of its arguments, and keeping it that way is cheaper to
  * reason about than a second code path that mutates the live menu.
  */
 
@@ -25,8 +25,16 @@ function send(command: MenuCommand): void {
   window?.webContents.send(EVENTS.menuCommand, command);
 }
 
-export function buildMenu(isDev: boolean, vaultUnlocked: boolean): void {
+export function buildMenu(
+  isDev: boolean,
+  vaultUnlocked: boolean,
+  updates: { readonly menuLabel: string; check(): void },
+): void {
   const isMac = process.platform === 'darwin';
+  const updateItem: MenuItemConstructorOptions = {
+    label: updates.menuLabel,
+    click: () => updates.check(),
+  };
 
   const appMenu: MenuItemConstructorOptions[] = isMac
     ? [
@@ -34,6 +42,7 @@ export function buildMenu(isDev: boolean, vaultUnlocked: boolean): void {
           label: app.name,
           submenu: [
             { role: 'about' },
+            updateItem,
             { type: 'separator' },
             {
               label: 'Settings…',
@@ -187,9 +196,10 @@ export function buildMenu(isDev: boolean, vaultUnlocked: boolean): void {
   const helpMenu: MenuItemConstructorOptions = {
     role: 'help',
     submenu: [
+      ...(!isMac ? [updateItem, { type: 'separator' as const }] : []),
       {
         label: 'Downpick on GitHub',
-        click: () => void shell.openExternal('https://github.com/'),
+        click: () => void shell.openExternal('https://github.com/downpick/downpick/releases/latest'),
       },
     ],
   };

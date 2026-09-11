@@ -75,22 +75,26 @@ each. Output lands in `release/`:
 | Platform | Configured targets |
 |----------|--------------------|
 | macOS | `.dmg` and `.zip`, arm64 + x64 |
-| Windows | `.zip`, x64 |
+| Windows | NSIS `.exe` installer, x64 |
 | Linux | `.AppImage`, x64 |
 
-The usual cross-building rules apply — macOS targets need a macOS host, and the others are
-reachable from any host through electron-builder's Docker images. Two targets are configured away
-from the defaults: Windows is a zip rather than an NSIS installer, and Linux has no `.deb`.
-[docs/releasing.md](docs/releasing.md) explains why, alongside the versioning and publishing steps
-for a release.
+The release workflow builds each platform on a native GitHub Actions runner. In particular, use
+a Windows runner for NSIS: Wine/QEMU cross-builds on Apple Silicon can fail. Linux has no `.deb`.
+[docs/releasing.md](docs/releasing.md) covers signing, versioning, update manifests, and publishing
+the complete draft release.
 
 `npm run dist:dir` produces an unpacked app directory without building installers, which is much
 faster when you only need to check that packaging resolves correctly.
 
-Builds are unsigned by default, so macOS Gatekeeper and Windows SmartScreen will both warn on
-first launch. To sign, set `CSC_LINK` and `CSC_KEY_PASSWORD` (and, on macOS, the notarization
+Without signing credentials, macOS Gatekeeper and Windows SmartScreen warn on first launch.
+To sign, set `CSC_LINK` and `CSC_KEY_PASSWORD` (and, on macOS, the notarization
 credentials `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`) before running
 `npm run dist`.
+
+The updater runs only in supported packaged builds. It lives entirely in the main process
+(`electron/updates.ts` and `electron/updateController.ts`); the renderer does not get a new network
+permission or an installation IPC channel. Tests inject the update provider and native dialogs
+to cover retries, concurrent checks, deferred restart, and the running-query guard.
 
 Icons are read from `build/icon.icns`, `build/icon.ico`, and `build/icon.png`. The single source
 is `build/icon.png`; `build/icon.icns` is regenerated from it whenever it is missing or older, and

@@ -29,6 +29,7 @@
     "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "mongodb": "^7.5.0",
     "mssql": "^11.0.1",
     "oracledb": "^7.0.1",

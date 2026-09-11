@@ -6,6 +6,9 @@ import { activeConnections } from './connections';
 // Maps a client-supplied queryId → cancel function for in-flight queries.
 // Populated when a query starts, removed when it finishes (success, error, or cancel).
 const runningQueries = new Map<string, () => void>();
+// Count executions themselves, including drivers with no cancellation callback or queryId.
+let activeQueryCount = 0;
+export function hasRunningQueries(): boolean { return activeQueryCount > 0; }
 
 // Derives the 1-based line number of a query error from the driver's error metadata.
 // PostgreSQL reports `position` (a 1-based character offset into the submitted SQL);
@@ -56,6 +59,7 @@ export function registerQueryHandlers(): void {
       const { queryTimeoutSeconds } = loadSettings();
       let timedOut = false;
       let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+      activeQueryCount++;
       try {
         const result = await driver.executeQuery(sql, (cancel) => {
           if (queryId) runningQueries.set(queryId, cancel);
@@ -89,6 +93,7 @@ export function registerQueryHandlers(): void {
         const message = err instanceof Error ? err.message : String(err);
         throw new AppError(400, message, errorLine(sql, err));
       } finally {
+        activeQueryCount--;
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (queryId) runningQueries.delete(queryId);
       }

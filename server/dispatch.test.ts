@@ -197,6 +197,30 @@ test('a query error carries the line it failed on', async () => {
   }
 });
 
+test('the update restart guard tracks overlapping queries without cancellation callbacks or IDs', async () => {
+  const { activeConnections } = require('./handlers/connections') as typeof import('./handlers/connections');
+  const { hasRunningQueries } = require('./handlers/query') as typeof import('./handlers/query');
+  const pending: Array<{ resolve(value: unknown): void; reject(error: Error): void }> = [];
+  activeConnections.set('update-guard::db', {
+    executeQuery: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+  } as never);
+  try {
+    assert.equal(hasRunningQueries(), false);
+    const payload = { connectionId: 'update-guard', database: 'db', sql: 'SELECT 1' };
+    const first = dispatch('query:run', payload);
+    const second = dispatch('query:run', payload);
+    assert.equal(hasRunningQueries(), true);
+    pending[0].resolve({ columns: [], rows: [] });
+    assert.equal((await first).ok, true);
+    assert.equal(hasRunningQueries(), true);
+    pending[1].reject(new Error('query failed'));
+    assert.equal((await second).ok, false);
+    assert.equal(hasRunningQueries(), false);
+  } finally {
+    activeConnections.delete('update-guard::db');
+  }
+});
+
 test('a timed-out query is tagged, so the UI can tell it from a rejected one', async () => {
   const connections = require('./handlers/connections') as typeof import('./handlers/connections');
   const { QUERY_TIMEOUT } = require('./channels') as typeof import('./channels');

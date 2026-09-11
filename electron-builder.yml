@@ -3,6 +3,11 @@ appId: com.downpick.app
 # the name it shows in the dock and the macOS menu bar. One source of truth for both.
 copyright: Downpick
 
+publish:
+  provider: github
+  owner: downpick
+  repo: downpick
+
 directories:
   buildResources: build
   output: release
@@ -38,14 +43,12 @@ mac:
       arch: [arm64, x64]
     - target: zip
       arch: [arm64, x64]
-  # Unsigned by default. Set CSC_LINK/CSC_KEY_PASSWORD (and notarize) to ship signed builds.
-  identity: null
+  # Set CSC_LINK/CSC_KEY_PASSWORD and Apple notarization credentials for auto-updatable
+  # releases. Without a Developer ID certificate the app offers manual downloads on macOS.
 
 win:
   target:
     - target: nsis
-      arch: [x64]
-    - target: portable
       arch: [x64]
 
 nsis:

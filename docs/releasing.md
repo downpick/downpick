@@ -1,208 +1,128 @@
 # Releasing
 
-A release is a git tag plus a GitHub release carrying one redistributable per platform. Everything
-below is run from a clean checkout on macOS; `release/` is gitignored, so no artifact is ever
-committed.
+Downpick uses `electron-updater` with public GitHub Releases. Every release must include the
+installers **and** the generated update manifests; uploading only the installers leaves existing
+clients unable to update. No GitHub token is embedded in the application.
 
-## Prerequisites (one-time)
+## Release through GitHub Actions
 
-- **Node 20+** and the dependencies installed (`npm install`, plus `cd client && npm install`)
-- **Docker Desktop**, running — Linux and Windows are cross-built inside a container
-- **GitHub CLI**, authenticated:
+1. Set a new, higher version in the root `package.json` and `package-lock.json`, for example with
+   `npm version --no-git-tag-version 1.3.0`. The client package version is not used for releases.
+2. Commit the changes, then push the commit and a matching `v<version>` tag.
+3. `.github/workflows/release.yml` tests and builds on macOS, Windows, and Linux. It checks that
+   the tag matches the package version. Both Mac architectures are built in the same job so
+   `latest-mac.yml` includes both payloads.
+4. Once all jobs succeed, the workflow uploads every artifact, manifest, blockmap, and
+   `SHA256SUMS.txt` to a **draft** GitHub release. A rerun can replace assets in that draft, but
+   refuses to modify an already published release. A manual workflow dispatch only builds and
+   saves workflow artifacts; it does not create a release.
+5. Download and smoke-test the packages, review the generated release notes, then publish the
+   complete draft as the latest stable release. Drafts and prereleases are not offered by the app.
+
+Do not publish a partial release while another platform is still building. Never replace binaries
+under a version already offered to clients: increment the version for fixes and rollbacks.
+
+## Signing credentials
+
+Configure these repository Actions secrets for macOS automatic updates:
+
+| Secret | Value |
+|---|---|
+| `MAC_CSC_LINK` | Base64-encoded Developer ID Application `.p12` certificate |
+| `MAC_CSC_KEY_PASSWORD` | Password for the certificate |
+| `APPLE_ID` | Apple account used for notarization |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for that account |
+| `APPLE_TEAM_ID` | Apple Developer team ID |
+
+For Windows signing, configure `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD`. Keep the same publisher
+identity across updates. These credentials are only used by the build job. The draft-upload job
+uses GitHub's short-lived `GITHUB_TOKEN` with `contents: write`.
+
+Without Mac credentials, builds remain available for manual installation but automatic updates
+are disabled in the app. `scripts/adhoc-sign-mac.js` repairs the bundle's ad-hoc signature so it
+is not reported as damaged; that is not a substitute for a Developer ID signature. The app checks
+the installed bundle's signing identity before enabling its updater.
+
+For a local signed Mac build, export `CSC_LINK`, `CSC_KEY_PASSWORD` and the three `APPLE_*`
+variables above. There is no `identity: null` override in the build configuration, so
+`electron-builder` can use the supplied certificate and notarize the app. Verify your release:
 
 ```bash
-brew install gh
+codesign --verify --deep --strict release/mac-arm64/Downpick.app
+spctl --assess --type execute --verbose release/mac-arm64/Downpick.app
 ```
 
-```bash
-gh auth login
-```
+Repeat for `release/mac/Downpick.app` on the Intel build. When distributing without signing,
+explain the macOS Gatekeeper / Windows SmartScreen first-launch warnings in the release notes.
 
-## What builds where
+## Local builds
 
-| Platform | Artifact | Built by |
-|----------|----------|----------|
-| macOS arm64 + x64 | `.dmg`, `.zip` | `electron-builder` natively on macOS |
-| Linux x64 | `.AppImage` | Docker (`electronuserland/builder`) |
-| Windows x64 | `.zip` | Docker (`electronuserland/builder`) |
-
-Windows ships as a zip rather than an NSIS installer, and Linux has no `.deb`. Both are deliberate —
-see [Constraints](#constraints).
-
-## 1. Set the version
-
-Edit `version` in the root `package.json`. That value is the single source of truth: electron-builder
-reads it for every filename, and no source file hardcodes a version. (`client/package.json` carries
-its own version, which nothing reads — leave it or bump it, it has no effect on the build.)
-
-Then export it, since every command below interpolates it:
+Use Node.js 24 and install both sets of dependencies:
 
 ```bash
-export VERSION=$(node -p "require('./package.json').version")
-```
-
-## 2. Test
-
-```bash
+npm ci
+npm ci --prefix client
 npm test
 ```
 
-## 3. Build macOS
+Build each platform on its native host:
 
 ```bash
-npm run dist:mac
+npm run dist:mac -- --publish never
+npm run dist:win -- --publish never
+npm run dist:linux -- --publish never
 ```
 
-Produces four artifacts in `release/` — dmg and zip, each for arm64 and x64 — plus `.blockmap`
-files and `latest-mac.yml`.
+The commands above run on macOS, Windows, and Linux respectively. Windows now ships an **NSIS
+installer**, not a portable ZIP. On Apple Silicon, cross-building NSIS through Wine/QEMU has
+failed because of host page-size differences; use the Windows Actions job or a Windows machine.
+Linux still uses AppImage and does not require a Debian maintainer email.
 
-Each bundle is ad-hoc signed by the `afterPack` hook (`scripts/adhoc-sign-mac.js`) — see
-[Constraints](#constraints) for why. The hook verifies its own work and fails the build if the
-signature doesn't hold, but it costs nothing to confirm on the packaged output:
+| Platform | Required release assets |
+|---|---|
+| macOS arm64 + x64 | Both `.dmg` and `*-mac.zip` payloads, their `.blockmap` files, `latest-mac.yml` |
+| Windows x64 | `Downpick Setup <version>.exe`, its `.blockmap`, `latest.yml` |
+| Linux x64 | `Downpick-<version>.AppImage`, `latest-linux.yml` |
+
+Collect the outputs from all three hosts into a single `release/` directory. Do not upload
+`builder-debug.yml`, `builder-effective-config.yaml`, or unpacked app directories. The
+`app-update.yml` inside each packaged app is internal configuration, not a release asset.
+
+To create a draft manually after creating and pushing the matching tag (Bash):
 
 ```bash
-codesign --verify --deep --strict release/mac-arm64/Downpick.app && codesign --verify --deep --strict release/mac/Downpick.app
+export VERSION=1.3.0
+cd release
+shasum -a 256 *.dmg *.zip *.exe *.AppImage > SHA256SUMS.txt
+gh release create "v$VERSION" --verify-tag --draft --title "Downpick $VERSION" --generate-notes
+gh release upload "v$VERSION" *.dmg *.zip *.exe *.AppImage *.blockmap latest*.yml SHA256SUMS.txt
 ```
 
-Both must print nothing and exit 0. Any output here means the artifact will be reported as
-damaged on a downloader's machine — do not ship it.
+Review and publish the draft only after all assets are uploaded and tested.
 
-## 4. Build Linux and Windows
+## Update behavior and validation
 
-Both come out of the same container. The named volumes are the important part: they keep a Linux
-`node_modules` separate from the host's macOS one, so the container never overwrites your local
-native binaries with Linux builds of the same packages.
+Supported installed builds check 15 seconds after launch and every six hours while open.
+An available stable update downloads in the background; menu text shows progress. Once ready,
+Downpick offers **Restart and Update** or **Later**. Later does not install on ordinary quit;
+choose the menu command when ready. A future launch checks again and can reuse the cached payload.
 
-```bash
-docker run --rm --platform linux/amd64 -v "$PWD":/project -v downpick-node-modules:/project/node_modules -v downpick-client-node-modules:/project/client/node_modules electronuserland/builder /bin/bash -c "npm install --no-audit --no-fund && (cd client && npm install --no-audit --no-fund) && npm run build && npx electron-builder --linux --win zip"
-```
+The command is in **Downpick** on macOS and **Help** on Windows/Linux, including while the vault
+is locked. Manual checks report when the app is current or a request fails. Background checks
+stay quiet when no update is available or the server cannot be reached. A failed download reports
+an error and can be retried. Development builds, unsigned Macs, portable Windows executables,
+and Linux builds not running as AppImage offer a link to the release downloads instead.
 
-Both installs are required. The two volumes are separate and each starts out empty, so the root
-`npm install` populates only `/project/node_modules` — the client's stays empty until its own
-install runs, and `npm run build` then dies in `copy-monaco` with
-`ENOENT: no such file or directory, lstat 'node_modules/monaco-editor/min/vs'`.
+Restart is refused while queries are running, including queries with no cancellation callback.
+Before invoking the installer, the app runs its normal vault/connection/AI shutdown, bounded by
+the existing two-second timeout. Installation never starts just because a download completed.
 
-First run pulls the image (several GB) and populates the volumes; later runs reuse both and are much
-faster. Once the volumes exist and dependencies haven't changed, both install steps
-(`npm install --no-audit --no-fund && (cd client && npm install --no-audit --no-fund) &&`) can be
-dropped from the command.
+Before shipping the first release with this feature, test with **two packaged versions** against
+a separate test release feed: install the older one, publish the newer one with all metadata,
+check/download, select Later, then restart explicitly and confirm the version changed. Also test
+an offline check, a running query, and both Mac architectures with signed/notarized builds.
+`npm test` covers controller decisions and concurrency, but does not execute native installers.
 
-This yields `Downpick-$VERSION.AppImage`, `Downpick-$VERSION-win.zip`, and `latest-linux.yml`.
-
-## 5. Check the output
-
-```bash
-ls -lh release/
-```
-
-Sanity-check the sizes: each platform's artifact should be well over 100 MB. Anything in the
-low-KB range is a failed build that left a stub behind — delete it rather than shipping it.
-
-```bash
-cd release && shasum -a 256 Downpick-$VERSION*.dmg Downpick-$VERSION*.zip Downpick-$VERSION.AppImage
-```
-
-Keep that output; it goes in the release notes.
-
-## 6. Commit and tag
-
-The tag should point at the tree the artifacts were built from, so commit first.
-
-```bash
-git commit -am "Version $VERSION"
-```
-
-```bash
-git push origin main
-```
-
-```bash
-git tag -a "v$VERSION" -m "Downpick $VERSION"
-```
-
-```bash
-git push origin "v$VERSION"
-```
-
-## 7. Publish
-
-Write the notes (see [Release notes](#release-notes) for what belongs in them):
-
-```bash
-$EDITOR /tmp/downpick-notes.md
-```
-
-```bash
-gh release create "v$VERSION" release/Downpick-$VERSION-arm64.dmg release/Downpick-$VERSION-arm64-mac.zip release/Downpick-$VERSION.dmg release/Downpick-$VERSION-mac.zip release/Downpick-$VERSION.AppImage release/Downpick-$VERSION-win.zip --title "Downpick $VERSION" --notes-file /tmp/downpick-notes.md
-```
-
-To add the auto-update manifests and blockmaps — only needed if electron-updater is ever wired up —
-append `release/latest-mac.yml release/latest-linux.yml release/*.blockmap`. Note there is no
-`latest.yml` for Windows: the `zip` target doesn't emit one.
-
-To attach something after the fact:
-
-```bash
-gh release upload "v$VERSION" <file>
-```
-
-## Release notes
-
-Worth including every time:
-
-- **Which download is which.** Apple Silicon vs. Intel dmg, AppImage for Linux (`chmod +x` first),
-  zip for Windows (extract, run `Downpick.exe`).
-- **The unsigned warning.** Gatekeeper blocks first launch with "Apple could not verify
-  Downpick is free of malware". The reliable bypass is **System Settings → Privacy & Security →
-  Open Anyway**, or `xattr -dr com.apple.quarantine /Applications/Downpick.app`. Right-click →
-  **Open** still works on some versions but was tightened in macOS 15, so lead with Open Anyway.
-  Windows SmartScreen needs **More info → Run anyway**.
-- **SHA-256 checksums**, from step 5.
-
-## Constraints
-
-**Builds are ad-hoc signed, not Developer ID signed.** `identity: null` in `electron-builder.yml`
-skips macOS signing, and skipping it entirely is not a neutral choice: packaging renames the bundle
-and rewrites `Info.plist` and `Resources`, which invalidates the linker-signed ad-hoc signature
-Electron ships with. The result verifies as *broken* rather than merely unsigned —
-
-```
-code has no resources but signature indicates they must be present
-```
-
-— and Gatekeeper reports a downloaded copy as **"Downpick is damaged and can't be opened. You
-should move it to the Trash."** That wording has nothing to do with a corrupt download, and
-right-click → **Open** does not clear it, because that path only bypasses an *unverified* app,
-never a *malformed* one. Users hit a dead end.
-
-`scripts/adhoc-sign-mac.js` runs as an `afterPack` hook and re-signs each bundle with
-`codesign --sign -`, giving it a valid self-consistent signature under the app's own identifier.
-First launch still needs **Open Anyway** — ad-hoc is not a trusted identity — but the app is no
-longer reported as damaged. The hook is a no-op on Windows and Linux, and skips itself when
-`CSC_LINK`/`CSC_NAME` is set, since electron-builder signs properly right after it.
-
-To ship genuinely signed builds, set `CSC_LINK` and `CSC_KEY_PASSWORD`, plus `APPLE_ID`,
-`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID` for notarization, and remove the `identity`
-line. That requires a paid Apple Developer account and is the only way to get a first launch with
-no warning at all.
-
-One caveat if the build config ever grows an `electronFuses` section: electron-builder flips fuses
-*after* `afterPack` and before its own signing step, which would invalidate the ad-hoc signature
-again. The ad-hoc pass would have to move after the fuse flip.
-
-**No Windows installer on Apple Silicon.** The `nsis` and `portable` targets need Wine to generate
-the uninstaller, and Wine aborts under QEMU emulation on an ARM host — an `anon_mmap_fixed`
-assertion, caused by the 16 KB host page size where Wine assumes 4 KB. No build flag works around
-it. The failure is also misleading: packaging succeeds and leaves a ~190 KB
-`Downpick Setup <version>.exe` that looks like an installer but is a truncated intermediate. Delete
-it if you see it.
-
-The `zip` target avoids Wine entirely and contains the identical app, so it is what the release
-ships. For a real installer, build on a `windows-latest` GitHub Actions runner or a Windows VM;
-enabling **Docker Desktop → Settings → General → Use Rosetta for x86_64/amd64 emulation** is
-sometimes enough to get Wine working locally, and is the cheapest thing to try first.
-
-**No `.deb`.** Debian packages require a maintainer email, which means putting a real address in
-`package.json`'s `author` field, where it would be published in the package metadata. The target is
-commented out in `electron-builder.yml`; restore it and set `author` to `{ name, email }` if you
-want it.
+Users of versions that predate the updater must manually install the first updater-enabled
+release. Existing Windows ZIP users must install the NSIS build; ad-hoc Mac users must manually
+install a Developer ID-signed build before subsequent automatic updates can work.

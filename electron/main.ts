@@ -14,6 +14,7 @@ import {
   WEB_PREFERENCES,
 } from './security';
 import { loadWindowState, trackWindowState } from './windowState';
+import { createUpdates } from './updates';
 
 /**
  * Where the renderer comes from.
@@ -48,7 +49,7 @@ app.setName('Downpick');
  *
  * Windows will not raise a toast for a desktop app it cannot tie to a Start Menu shortcut
  * carrying the same AppUserModelID. Electron sets one by itself only when it detects
- * Squirrel; this app ships an NSIS installer and a portable build, so neither gets it for
+ * Squirrel; this app ships an NSIS installer, which does not get it for
  * free and the notifications the query-finished feature sends would arrive unattributed —
  * or not at all.
  *
@@ -148,6 +149,28 @@ function installDevCsp(): void {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  let updates: ReturnType<typeof createUpdates> | undefined;
+  let teardownDone = false;
+  let teardownStarted = false;
+
+  // NSIS can spawn its installer before Electron's before-quit event. Finish our own
+  // teardown first, then hand off to quitAndInstall instead of substituting app.quit.
+  const quitWith = (install?: () => void) => {
+    if (teardownStarted) return;
+    teardownStarted = true;
+    if (!install) updates?.stop();
+    const deadline = new Promise((resolve) => setTimeout(resolve, 2000));
+    void Promise.race([shutdown().catch(() => {}), deadline]).then(() => {
+      // Do not prevent Squirrel.Mac's native before-quit event after it starts installing.
+      teardownDone = true;
+      if (install) {
+        install();
+      } else {
+        app.quit();
+      }
+    });
+  };
+
   app.on('second-instance', () => {
     const [window] = BrowserWindow.getAllWindows();
     if (!window) return;
@@ -169,8 +192,15 @@ if (!app.requestSingleInstanceLock()) {
     // is shut. Driven from the store rather than from the renderer because the idle
     // auto-lock fires in this process, and the renderer does not find out about it until
     // some later call comes back 423.
-    const refreshMenu = (status: { initialized: boolean; locked: boolean }) =>
-      buildMenu(Boolean(DEV_SERVER), status.initialized && !status.locked);
+    const refreshMenu = (status: { initialized: boolean; locked: boolean }) => {
+      if (updates) buildMenu(Boolean(DEV_SERVER), status.initialized && !status.locked, updates);
+    };
+    updates = createUpdates(() => refreshMenu(getVaultStatus()), quitWith, () => {
+      // A failed native install can leave the app open. Future quits must tear down any
+      // connections the user opens after unlocking the vault again.
+      teardownDone = false;
+      teardownStarted = false;
+    });
     onVaultStatusChange(refreshMenu);
     refreshMenu(getVaultStatus());
 
@@ -196,18 +226,11 @@ if (!app.requestSingleInstanceLock()) {
     app.quit();
   });
 
-  let teardownDone = false;
   app.on('before-quit', (event) => {
     if (teardownDone) return;
     event.preventDefault();
 
-    // `before-quit` does not await an async listener, hence the re-entry flag. The race is
-    // deliberate: a pool wedged on an unresponsive server must not make the app unquittable,
-    // so whichever finishes first wins and the process exits either way.
-    const deadline = new Promise((resolve) => setTimeout(resolve, 2000));
-    void Promise.race([shutdown().catch(() => {}), deadline]).then(() => {
-      teardownDone = true;
-      app.quit();
-    });
+    quitWith();
   });
+  app.on('will-quit', () => updates?.stop());
 }

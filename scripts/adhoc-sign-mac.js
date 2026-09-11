@@ -1,6 +1,6 @@
 // electron-builder afterPack hook: ad-hoc sign the macOS bundle.
 //
-// `identity: null` in electron-builder.yml skips signing entirely, which leaves the app
+// Building without a Developer ID certificate can leave the app
 // carrying the linker-signed ad-hoc signature that came with the Electron binary. Packaging
 // renames the bundle and rewrites Info.plist and Resources, so that inherited signature no
 // longer matches its own seal:

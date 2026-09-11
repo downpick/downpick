@@ -39,10 +39,11 @@ Note that locking does not clear query results already rendered in the window.
 
 ## Process isolation
 
-Downpick binds no port and speaks no HTTP. Earlier versions ran a loopback web server, which
-needed a per-boot bearer token, a `Host` header allowlist against DNS rebinding, and a CORS
-origin allowlist to keep pages you visited away from your databases. None of that has a subject
-anymore — there is nothing to connect to. What protects the app now:
+Downpick exposes no database or vault HTTP API. Earlier versions served the UI through a
+loopback web server; the UI now uses Electron's custom protocol and IPC. On macOS only,
+`electron-updater` temporarily serves the downloaded update ZIP over an authenticated loopback
+HTTP endpoint for Squirrel.Mac. That endpoint has no database or vault handlers. What protects
+the app now:
 
 - The renderer runs fully sandboxed: `sandbox`, `contextIsolation`, and no `nodeIntegration`, so
   `require` and `process` simply do not exist in the page.
@@ -63,6 +64,23 @@ anymore — there is nothing to connect to. What protects the app now:
 
 The `--dev-server` flag that points the app at Vite is ignored in a packaged build, so a shipped
 app cannot be aimed at another origin — nor inherit the relaxed dev CSP that comes with it.
+
+## Application updates
+
+The main process checks public GitHub Releases and downloads update artifacts over HTTPS.
+These requests contain no vault credentials, queries, results, or AI conversations; the service
+can observe ordinary connection information such as the client's IP address. No GitHub access
+token is packaged with the app.
+
+`electron-updater` validates artifact checksums and uses platform signature validation where
+configured. Mac automatic updates require a Developer ID-signed build; ad-hoc builds offer a
+manual download instead. Windows release signing should preserve the same publisher identity.
+Neither signature checks nor TLS verification are disabled by the app.
+
+Update controls live in the native application menu and do not add renderer IPC capabilities.
+Downloaded updates require an explicit restart action, which is refused while queries are
+running. Before installation, Downpick locks the vault and closes its connections through the
+normal shutdown path.
 
 ## What this does not protect against
 
