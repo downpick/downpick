@@ -11,6 +11,7 @@ import { registerEditor, unregisterEditor, saveTabs, EditorRange } from '../pers
 import { ConfirmDialog } from './ConfirmDialog';
 import { splitSql, statementAtOffset, SqlDialect } from '../../../server/drivers/splitSql';
 import { QUERY_TIMEOUT } from '../../../server/channels';
+import { sqlCompletionContext, quoteSqlIdentifier } from '../../../server/drivers/sqlCompletion';
 
 interface QueryEditorProps {
   tab: Tab;
@@ -632,7 +633,7 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
         monaco.languages.registerCompletionItemProvider('sql', {
           // '.' triggers column completions after a table name (table.█)
           // '"' triggers identifier completions when the user opens a quote manually
-          triggerCharacters: ['.', '"'],
+          triggerCharacters: ['.', '"', '['],
           provideCompletionItems: (model, position) => {
             const word = model.getWordUntilPosition(position);
             const baseRange = {
@@ -642,115 +643,51 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
               endColumn: word.endColumn,
             };
 
-            // If the character immediately before the current word is an opening
-            // quote that the user typed manually ("  or  [), extend the replacement
-            // range to cover it. Without this, accepting a quoted completion like
-            // "users" would leave the user's " in place and produce ""users".
-            const charBefore = word.startColumn > 1
-              ? model.getValueInRange({
-                  startLineNumber: position.lineNumber,
-                  endLineNumber: position.lineNumber,
-                  startColumn: word.startColumn - 1,
-                  endColumn: word.startColumn,
-                })
-              : '';
-            const hasOpenQuote = charBefore === '"' || charBefore === '[';
-            // identRange is used for table/column completions; keywords use baseRange.
-            const identRange = hasOpenQuote
-              ? { ...baseRange, startColumn: baseRange.startColumn - 1 }
-              : baseRange;
-
-            // ── Schema look-up ────────────────────────────────────────────────
             const modelInfo = modelConnectionMap.get(model.uri.toString());
             const { activeConnections, savedConnections } = useStore.getState();
             const schema = modelInfo
               ? activeConnections[modelInfo.connectionId]?.schemas[modelInfo.database]?.schema ?? null
               : null;
-
-            // Identifier quoting: PostgreSQL needs "Name" to preserve case,
-            // SQL Server uses [Name]. Fall back to unquoted if type unknown.
-            const connId = modelInfo?.connectionId;
-            const connType = savedConnections.find((c) => c.id === connId)?.type;
-            const q = connType === 'sqlserver'
-              ? (n: string) => `[${n}]`
-              : (n: string) => `"${n}"`; // postgres default
-
-            // Flatten schema into usable lists
-            type TableEntry  = { name: string; schemaName: string };
-            type ColumnEntry = { name: string; type: string; tableName: string };
-            const tables: TableEntry[] = [];
-            const allColumns: ColumnEntry[] = [];
-            const tableColMap = new Map<string, ColumnEntry[]>();
-
-            if (schema) {
-              for (const db of schema.databases) {
-                for (const sNode of db.schemas) {
-                  for (const tNode of sNode.tables) {
-                    tables.push({ name: tNode.name, schemaName: sNode.name });
-                    const cols: ColumnEntry[] = tNode.columns.map((c) => ({
-                      name: c.name,
-                      type: c.type,
-                      tableName: tNode.name,
-                    }));
-                    tableColMap.set(tNode.name.toLowerCase(), cols);
-                    allColumns.push(...cols);
-                  }
-                }
-              }
+            const connType = savedConnections.find((c) => c.id === modelInfo?.connectionId)?.type;
+            const dialect = dialectFor(connType);
+            if (!dialect) return { suggestions: [] };
+            const context = sqlCompletionContext(model.getValue(), model.getOffsetAt(position), dialect, schema);
+            if (context.suppressed) return { suggestions: [] };
+            const q = (name: string) => quoteSqlIdentifier(name, dialect);
+            const start = model.getPositionAt(context.replaceStart);
+            const end = model.getPositionAt(context.replaceEnd);
+            // Monaco completion ranges must stay on the cursor's line. A multiline quoted
+            // identifier needs a dedicated editing flow rather than an invalid suggestion.
+            if (start.lineNumber !== position.lineNumber || end.lineNumber !== position.lineNumber) {
+              return { suggestions: [] };
             }
-
-            // ── Context detection ─────────────────────────────────────────────
-            // Full text from start of document to the cursor position
-            const textBefore = model.getValueInRange({
-              startLineNumber: 1,
-              endLineNumber: position.lineNumber,
-              startColumn: 1,
-              endColumn: position.column,
-            });
-            const fullText = model.getValue();
-
-            // Build alias → real table name map so "alias." completions work.
-            // Pattern: FROM/JOIN tableName [AS] alias
-            // SQL keywords that can legally follow a table name are excluded as aliases.
-            const SQL_KW = new Set([
-              'where', 'on', 'set', 'and', 'or', 'not', 'group', 'order', 'having',
-              'limit', 'offset', 'union', 'except', 'intersect', 'inner', 'left',
-              'right', 'cross', 'join', 'select', 'from', 'into', 'update', 'insert',
-              'delete', 'create', 'drop', 'alter', 'as',
-            ]);
-            const aliasToTable = new Map<string, string>();
-            const aliasRe = /\b(?:FROM|JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|CROSS\s+JOIN|UPDATE|INTO)\s+(?:(?:"?\w+"?|`\w+`|\[\w+\])\s*\.\s*)?(?:"(\w+)"|`(\w+)`|\[(\w+)\]|(\w+))(?:\s+(?:AS\s+)?(\w+))?/gi;
-            let am: RegExpExecArray | null;
-            while ((am = aliasRe.exec(fullText)) !== null) {
-              const tName = (am[1] ?? am[2] ?? am[3] ?? am[4] ?? '').toLowerCase();
-              const alias = am[5]?.toLowerCase();
-              if (tName && alias && !SQL_KW.has(alias)) {
-                aliasToTable.set(alias, tName);
-              }
-            }
-
-            // "tableName." / alias. / `"tableName".` / `[tableName].` → columns of that table.
-            // Resolves through aliasToTable so "ti." works when the query has "TiposItem" ti.
-            const dotMatch = textBefore.match(/(?:"(\w+)"|`(\w+)`|\[(\w+)\]|(\w+))\.\w*$/);
-            if (dotMatch) {
-              const ref = (dotMatch[1] ?? dotMatch[2] ?? dotMatch[3] ?? dotMatch[4] ?? '').toLowerCase();
-              const resolvedTable = tableColMap.has(ref) ? ref : (aliasToTable.get(ref) ?? ref);
-              const cols = tableColMap.get(resolvedTable) ?? [];
+            const identRange = {
+              startLineNumber: start.lineNumber,
+              startColumn: start.column,
+              endLineNumber: end.lineNumber,
+              endColumn: end.column,
+            };
+            const isTableCtx = context.tableContext;
+            const typedPrefix = model.getValue().slice(context.replaceStart, model.getOffsetAt(position));
+            const hasTypedQuote = typedPrefix.startsWith('"') || typedPrefix.startsWith('[');
+            const insertIdentifier = (name: string) => quoteSqlIdentifier(name, dialect, hasTypedQuote);
+            const filterText = (name: string) => hasTypedQuote ? insertIdentifier(name) : name;
+            const nameCounts = new Map<string, number>();
+            for (const col of context.columns) nameCounts.set(col.name, (nameCounts.get(col.name) ?? 0) + 1);
+            const columnSuggestions: Monaco.languages.CompletionItem[] = context.columns.map((col) => {
+              const ambiguous = !context.qualified && (nameCounts.get(col.name) ?? 0) > 1;
+              const qualifier = col.qualifier.map(q).join('.');
               return {
-                suggestions: cols.map((col) => ({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: col.name,
-                  detail: col.type,
-                  sortText: col.name,
-                  range: baseRange,
-                })),
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: ambiguous ? `${qualifier}.${insertIdentifier(col.name)}` : insertIdentifier(col.name),
+                filterText: filterText(col.name),
+                detail: `${qualifier} · ${col.table.schema}.${col.table.name}  ${col.type}`,
+                sortText: `0_${col.name}`,
+                range: identRange,
               };
-            }
-
-            // After FROM / JOIN / UPDATE / INTO → tables should sort to the top
-            const isTableCtx = /\b(FROM|JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|CROSS\s+JOIN|UPDATE|INTO)\s+\w*$/i
-              .test(textBefore);
+            });
+            if (context.qualified && !isTableCtx) return { suggestions: columnSuggestions };
 
             // ── Build suggestion list ─────────────────────────────────────────
             const suggestions: Monaco.languages.CompletionItem[] = [];
@@ -766,61 +703,36 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
               'CASE WHEN', 'THEN', 'ELSE', 'END', 'UNION', 'UNION ALL', 'INTERSECT',
               'EXCEPT', 'WITH', 'RETURNING', 'ASC', 'DESC', 'NULLS FIRST', 'NULLS LAST',
             ];
-            suggestions.push(
+            if (!context.qualified) suggestions.push(
               ...keywords.map((k) => ({
                 label: k,
                 kind: monaco.languages.CompletionItemKind.Keyword,
                 insertText: k,
-                // In table context, keywords sort below tables; otherwise above columns
+                // Relevant columns and table-context suggestions sort before keywords.
                 sortText: isTableCtx ? `2_${k}` : `1_${k}`,
                 range: baseRange,
               }))
             );
 
-            // Table names — insertText is always quoted so case is preserved exactly
+            // Preserve catalog case, quoting PostgreSQL names only when needed or requested.
+            const tableNameCounts = new Map<string, number>();
+            for (const t of context.tables) tableNameCounts.set(t.name, (tableNameCounts.get(t.name) ?? 0) + 1);
             suggestions.push(
-              ...tables.map((t) => ({
+              ...context.tables.map((t) => ({
                 label: t.name,
                 kind: monaco.languages.CompletionItemKind.Class,
-                insertText: q(t.name),
-                detail: t.schemaName,
-                documentation: { value: `Table in schema **${t.schemaName}**` },
-                // In table context sort first; otherwise after keywords but before columns
+                insertText: !context.qualified && (tableNameCounts.get(t.name) ?? 0) > 1
+                  ? `${q(t.schema)}.${insertIdentifier(t.name)}` : insertIdentifier(t.name),
+                filterText: filterText(t.name),
+                detail: t.schema,
+                documentation: { value: `Table in schema **${t.schema}**` },
+                // In table context sort first; otherwise after relevant columns and keywords.
                 sortText: isTableCtx ? `0_${t.name}` : `2_${t.name}`,
                 range: identRange,
               }))
             );
 
-            // Column names — only from tables already mentioned in the query.
-            // fullText and aliasToTable are already built above.
-            if (!isTableCtx) {
-              // Matches: FROM/JOIN/etc [optional schema.] tableName (quoted or unquoted)
-              const tableRefRe = /\b(?:FROM|JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|CROSS\s+JOIN|UPDATE|INTO)\s+(?:(?:"?\w+"?|`\w+`|\[\w+\])\s*\.\s*)?(?:"(\w+)"|`(\w+)`|\[(\w+)\]|(\w+))/gi;
-              const referencedTables = new Set<string>();
-              let m: RegExpExecArray | null;
-              while ((m = tableRefRe.exec(fullText)) !== null) {
-                const name = (m[1] ?? m[2] ?? m[3] ?? m[4] ?? '').toLowerCase();
-                if (name) referencedTables.add(name);
-              }
-
-              // Only suggest columns when at least one table is referenced;
-              // filter to just those tables so unrelated columns don't appear.
-              if (referencedTables.size > 0) {
-                const scopedColumns = allColumns.filter((col) =>
-                  referencedTables.has(col.tableName.toLowerCase())
-                );
-                suggestions.push(
-                  ...scopedColumns.map((col) => ({
-                    label: col.name,
-                    kind: monaco.languages.CompletionItemKind.Field,
-                    insertText: col.name,
-                    detail: `${col.tableName}  ${col.type}`,
-                    sortText: `3_${col.name}`,
-                    range: baseRange,
-                  }))
-                );
-              }
-            }
+            if (!isTableCtx) suggestions.push(...columnSuggestions);
 
             return { suggestions };
           },
@@ -916,10 +828,12 @@ export const QueryEditor = React.memo(function QueryEditor({ tab }: QueryEditorP
     wordWrap: 'on',
     padding: { top: 12, bottom: 12 },
     suggest: { showKeywords: true },
+    // Text harvested from other statements/tabs bypasses the SQL provider's scope rules.
+    wordBasedSuggestions: connType === 'mongodb' ? 'matchingDocuments' : 'off',
     tabSize: 2,
     formatOnPaste: true,
     automaticLayout: true,
-  }), []);
+  }), [connType]);
 
   return (
     <div className="flex flex-col h-full">
