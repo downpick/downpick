@@ -14,12 +14,13 @@ See [docs/ipc.md](docs/ipc.md) for the channel list.
 
 ## Requirements
 
-- Node.js 20+ (Node 21+ for `npm test`, which relies on glob support in `node --test`)
-- npm 9+
+- Node.js 24 (the release workflow's major version)
+- npm 11.19.0 (pinned by `packageManager` in the root `package.json`)
 
 ## Dev mode
 
 ```bash
+npm install --global "$(node -p "require('./package.json').packageManager")"
 npm install
 ```
 

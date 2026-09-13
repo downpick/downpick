@@ -10,7 +10,8 @@ draft. **Pushing a `v*` tag starts the workflow**, even if you also build locall
 
 ## 1. Prerequisites and repository setup
 
-Use Node.js 24, npm, Git, and the GitHub CLI. On macOS, install the CLI if needed:
+Use Node.js 24, npm 11.19.0 (pinned in `package.json`), Git, and the GitHub CLI. On macOS,
+install the CLI if needed:
 
 ```bash
 brew install gh
@@ -60,13 +61,14 @@ artifact filenames. There is no separate build-number setting. Keep `package-loc
 the client package version does not control releases.
 
 Choose the version you intend to publish. `1.3.0` is an example; use a higher unused version for
-each subsequent release. The conditional also handles a version bump you already made:
+each subsequent release. `--allow-same-version` also repairs a partial manual version bump:
+the command updates `package.json`, the lockfile's top-level version, and its `packages[""]`
+version even when `package.json` already contains the requested version. It does not create a
+commit or tag.
 
 ```bash
 export NEXT_VERSION=1.3.0
-if [ "$(node -p "require('./package.json').version")" != "$NEXT_VERSION" ]; then
-  npm version "$NEXT_VERSION" --no-git-tag-version
-fi
+npm version "$NEXT_VERSION" --no-git-tag-version --allow-same-version
 
 export VERSION="$(node -p "require('./package.json').version")"
 export TAG="v$VERSION"
@@ -75,11 +77,12 @@ node -e "const p = require('./package.json'); const l = require('./package-lock.
 git diff -- package.json package-lock.json
 ```
 
-If the lockfile check fails after a manual edit to `package.json`, synchronize it and repeat the
-check before proceeding:
+If the lockfile check fails after a manual edit, synchronize all version fields to the current
+`package.json` version and repeat the check before proceeding. This does not reinstall or upgrade
+dependencies:
 
 ```bash
-npm install --package-lock-only
+npm version "$(node -p "require('./package.json').version")" --no-git-tag-version --allow-same-version
 ```
 
 Check that the proposed tag and release do not already exist:
@@ -105,7 +108,14 @@ export TAG="v$VERSION"
 ## 3. Install dependencies and validate
 
 Run from the repository root. Both installs are required because the renderer has its own
-lockfile and dependencies:
+lockfile and dependencies. First select the same npm version as the release workflow:
+
+```bash
+npm install --global "$(node -p "require('./package.json').packageManager")"
+npm --version
+```
+
+It should print `11.19.0`. Then install and validate:
 
 ```bash
 npm ci
@@ -116,6 +126,20 @@ npm run build
 
 Stop and fix any failure before continuing. `npm run build` compiles the renderer and the main
 process; it does not generate installers.
+
+If `npm ci` reports `Missing: ... from lock file`, that is a dependency-graph problem, separate
+from the version-field check in step 2. Older npm versions can accept an incomplete optional
+dependency tree that newer npm rejects. With the pinned npm selected, repair the lockfile,
+review its changes, and repeat the clean install:
+
+```bash
+npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+git diff -- package-lock.json
+npm ci
+```
+
+Commit the repaired lockfile with the release changes. Keep `npm ci` in the workflow so it
+checks the committed dependency graph rather than silently rewriting it on the build runner.
 
 ## 4. Commit, create the annotated tag, and push
 
@@ -324,6 +348,7 @@ git clone --branch "$TAG" --depth 1 https://github.com/downpick/downpick.git dow
 cd downpick-release
 export VERSION="$(node -p "require('./package.json').version")"
 test "$TAG" = "v$VERSION"
+npm install --global "$(node -p "require('./package.json').packageManager")"
 npm ci
 npm ci --prefix client
 npm test
@@ -399,6 +424,7 @@ dependencies, test, and generate the installer:
 
 ```powershell
 $env:VERSION = node -p "require('./package.json').version"
+npm install --global (node -p "require('./package.json').packageManager")
 npm ci
 npm ci --prefix client
 npm test
@@ -428,12 +454,13 @@ With Docker Desktop running, execute this from the tagged repository root:
 ```bash
 docker info
 docker run --rm --platform linux/amd64 \
+  -e DOWNPICK_NPM_VERSION="$(node -p "require('./package.json').packageManager")" \
   -v "$PWD":/project \
   -v downpick-node-modules:/project/node_modules \
   -v downpick-client-node-modules:/project/client/node_modules \
   -w /project \
   electronuserland/builder \
-  /bin/bash -c 'npm ci && npm ci --prefix client && npm run dist:linux -- --publish never'
+  /bin/bash -c 'npm install --global "$DOWNPICK_NPM_VERSION" && npm ci && npm ci --prefix client && npm run dist:linux -- --publish never'
 ```
 
 The named volumes keep Linux dependencies separate from the host's `node_modules`. Both installs

@@ -51,10 +51,14 @@ Windows ZIP users should install the new Setup executable.
 
 ### From source
 
-Node.js 20+ and npm 9+:
+Node.js 24 and npm 11.19.0 (the repository's pinned package manager):
 
 ```bash
-git clone https://github.com/downpick/downpick.git && cd downpick && npm install && cd client && npm install && cd ..
+git clone https://github.com/downpick/downpick.git
+cd downpick
+npm install --global "$(node -p "require('./package.json').packageManager")"
+npm ci
+npm ci --prefix client
 ```
 
 ```bash
