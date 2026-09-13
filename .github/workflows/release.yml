@@ -45,7 +45,16 @@ jobs:
       - run: npm test
       - name: Build macOS packages and update manifest
         if: matrix.platform == 'mac'
-        run: npm run dist:mac -- --publish never
+        shell: bash
+        run: |
+          # Missing Actions secrets become empty strings. electron-builder interprets an
+          # empty CSC_LINK as a certificate path pointing at the working directory.
+          for signing_variable in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!signing_variable}" ]; then
+              unset "$signing_variable"
+            fi
+          done
+          npm run dist:mac -- --publish never
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}

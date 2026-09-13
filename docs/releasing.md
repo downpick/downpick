@@ -208,6 +208,25 @@ gh run watch "$RUN_ID" --repo "$REPO" --exit-status
 A source-code correction requires a new commit and a new version/tag; rerunning an existing run
 still builds the original commit. Do not publish while any build or upload job is still running.
 
+To validate a workflow fix before creating another release tag, commit and push the fix to
+`main`, then run the workflow manually against that branch:
+
+```bash
+gh workflow run release.yml --repo "$REPO" --ref main
+export CHECK_COMMIT="$(git rev-parse HEAD)"
+export CHECK_RUN_ID="$(gh run list --repo "$REPO" --workflow release.yml --event workflow_dispatch --branch main --commit "$CHECK_COMMIT" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+printf 'Validation run: %s\n' "$CHECK_RUN_ID"
+```
+
+If the ID is empty, repeat the lookup after GitHub queues the run. Then wait for completion:
+
+```bash
+gh run watch "$CHECK_RUN_ID" --repo "$REPO" --exit-status
+```
+
+A manual branch run builds all platforms and saves workflow artifacts, but does not create a
+GitHub release. Once it is green, follow steps 2–5 with the next release version and tag.
+
 ## 6. Download and verify the draft
 
 Inspect the release, confirm it is still a draft, and download its assets into a fresh directory:
@@ -335,6 +354,12 @@ short-lived `GITHUB_TOKEN` with `contents: write`; no GitHub token is embedded i
 Without a Developer ID certificate, Mac builds retain the ad-hoc signature applied by
 `scripts/adhoc-sign-mac.js` and offer manual downloads instead of autoupdate. Ad-hoc signing
 repairs the bundle signature but does not establish a trusted publisher identity.
+
+The workflow removes empty signing/notarization environment variables before the Mac build.
+GitHub supplies an empty string for an unset secret, but `electron-builder` treats an empty
+`CSC_LINK` as a certificate path resolving to the checkout directory and fails with
+`<checkout path> not a file`. For a local ad-hoc build, leave signing variables unset rather
+than exporting them as empty strings. Nonempty credentials are preserved for signed builds.
 
 ## Local builds
 
