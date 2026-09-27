@@ -203,6 +203,9 @@ export const api = {
   query: (connectionId: string, database: string, sql: string, queryId?: string) =>
     invoke<import('./store').QueryResult>('query:run', { connectionId, database, sql, queryId }),
   cancelQuery: (queryId: string) => invoke<{ ok: boolean }>('query:cancel', { queryId }),
+  routineDefinition: (connectionId: string, database: string, routineId: string) =>
+    invoke<{ script: string }>('schema:routineDefinition', { connectionId, database, routineId }),
+
   schema: (connectionId: string, database: string) =>
     invoke<import('./store').SchemaTree>('schema:get', { connectionId, database }),
 

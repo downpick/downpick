@@ -1,6 +1,6 @@
 import { Pool, PoolClient, QueryResult as PgQueryResult } from 'pg';
 import { ConnectionConfigWithPassword } from '../connections';
-import { Driver, QueryResult, SchemaTree, SchemaNode, StatementSummary, TableNode } from './types';
+import { Driver, QueryResult, SchemaTree, SchemaNode, StatementSummary, TableNode, RoutineNode } from './types';
 import { totalRowsAffected } from './statements';
 
 // PostgreSQL built-in type OIDs → human-readable names.
@@ -184,11 +184,40 @@ export class PostgresDriver implements Driver {
           })
         );
 
-        return { name: schemaName, tables };
+        const routinesResult = await this.pool.query(
+          `SELECT p.oid::text AS id, p.proname AS name,
+                  CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END AS kind,
+                  pg_catalog.pg_get_function_identity_arguments(p.oid) AS arguments
+           FROM pg_catalog.pg_proc p
+           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname = $1 AND p.prokind IN ('f', 'p')
+           ORDER BY p.proname, p.oid`,
+          [schemaName]
+        );
+        const routines: RoutineNode[] = routinesResult.rows.map((routine) => ({
+          id: routine.id,
+          name: routine.name,
+          kind: routine.kind,
+          arguments: routine.arguments,
+        }));
+
+        return { name: schemaName, tables, routines };
       })
     );
 
     return { databases: [{ name: dbName, schemas }] };
+  }
+
+  async getRoutineDefinition(id: string): Promise<string> {
+    const result = await this.pool.query(
+      `SELECT pg_catalog.pg_get_functiondef(p.oid) AS definition
+       FROM pg_catalog.pg_proc p
+       WHERE p.oid = $1::oid AND p.prokind IN ('f', 'p')`,
+      [id]
+    );
+    const definition = result.rows[0]?.definition;
+    if (!definition) throw new Error('Routine definition is unavailable. Refresh the schema and check your permissions.');
+    return definition;
   }
 
   async close(): Promise<void> {

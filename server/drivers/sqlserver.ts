@@ -1,6 +1,6 @@
 import * as sql from 'mssql';
 import { ConnectionConfigWithPassword } from '../connections';
-import { Driver, QueryResult, SchemaTree, DatabaseNode, SchemaNode, StatementSummary, TableNode, ColumnNode } from './types';
+import { Driver, QueryResult, SchemaTree, DatabaseNode, SchemaNode, StatementSummary, TableNode, ColumnNode, RoutineNode } from './types';
 import { totalRowsAffected } from './statements';
 import { sqlServerIndexScript } from './sqlServerIndexScript';
 
@@ -151,9 +151,10 @@ export class SqlServerDriver implements Driver {
 
   private async getSchemasForDatabase(pool: sql.ConnectionPool, dbName: string): Promise<SchemaNode[]> {
     const schemasResult = await pool.request().query(`
-      SELECT DISTINCT TABLE_SCHEMA as schema_name
-      FROM INFORMATION_SCHEMA.TABLES
-      WHERE TABLE_TYPE = 'BASE TABLE'
+      SELECT DISTINCT s.name AS schema_name
+      FROM sys.schemas s
+      JOIN sys.objects o ON o.schema_id = s.schema_id
+      WHERE o.is_ms_shipped = 0 AND o.type IN ('U', 'P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT')
       ORDER BY schema_name
     `);
 
@@ -231,11 +232,49 @@ export class SqlServerDriver implements Driver {
           })
         );
 
-        return { name: schemaName, tables };
+        const routinesResult = await pool.request()
+          .input('schema', sql.NVarChar, schemaName)
+          .query(`
+            SELECT CONVERT(varchar(20), o.object_id) AS id, o.name,
+                   CASE WHEN o.type IN ('P', 'PC') THEN 'procedure' ELSE 'function' END AS kind
+            FROM sys.objects o
+            JOIN sys.schemas s ON s.schema_id = o.schema_id
+            WHERE s.name = @schema AND o.is_ms_shipped = 0
+              AND o.type IN ('P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT')
+            ORDER BY o.name
+          `);
+        const routines: RoutineNode[] = routinesResult.recordset.map((routine) => ({
+          id: routine.id,
+          name: routine.name,
+          kind: routine.kind,
+        }));
+
+        return { name: schemaName, tables, routines };
       })
     );
 
     return schemas;
+  }
+
+  async getRoutineDefinition(id: string): Promise<string> {
+    const pool = await this.getPool();
+    const result = await pool.request().input('id', sql.VarChar, id).query(`
+      SELECT m.definition
+      FROM sys.objects o
+      JOIN sys.sql_modules m ON m.object_id = o.object_id
+      WHERE o.object_id = CONVERT(int, @id) AND o.is_ms_shipped = 0
+        AND o.type IN ('P', 'FN', 'IF', 'TF')
+    `);
+    const definition = result.recordset[0]?.definition;
+    if (!definition) {
+      throw new Error('Routine definition is unavailable. It may be encrypted, implemented in CLR, removed, or require VIEW DEFINITION permission.');
+    }
+    // ALTER works for existing routines on SQL Server versions before CREATE OR ALTER.
+    // Preserve leading comments and never rewrite CREATE inside the routine body.
+    return definition.replace(
+      /^((?:\s|--[^\r\n]*(?:\r?\n|$)|\/\*[\s\S]*?\*\/)*)CREATE(?:\s+OR\s+ALTER)?(?=\s+(?:PROC(?:EDURE)?|FUNCTION)\b)/i,
+      '$1ALTER',
+    );
   }
 
   async close(): Promise<void> {

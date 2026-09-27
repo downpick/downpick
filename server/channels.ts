@@ -28,6 +28,7 @@ export const CHANNELS = [
   'query:cancel',
 
   'schema:get',
+  'schema:routineDefinition',
 
   'settings:get',
   'settings:update',

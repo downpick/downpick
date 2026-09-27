@@ -43,9 +43,18 @@ export interface IndexNode {
   creationScript?: string;
 }
 
+export interface RoutineNode {
+  id: string;
+  name: string;
+  kind: 'function' | 'procedure';
+  /** Identity arguments distinguish overloaded PostgreSQL routines. */
+  arguments?: string;
+}
+
 export interface SchemaNode {
   name: string;
   tables: TableNode[];
+  routines?: RoutineNode[];
 }
 
 export interface DatabaseNode {
@@ -328,6 +337,9 @@ interface AppState {
   refreshAiProviders: () => Promise<void>;
 
   // When enabled, open tabs are saved to localStorage and restored on next launch.
+  showRoutines: boolean;
+  setShowRoutines: (enabled: boolean) => void;
+
   persistTabs: boolean;
   setPersistTabs: (enabled: boolean) => void;
 }
@@ -737,6 +749,16 @@ export const useStore = create<AppState>((set, get) => ({
       // "no AI provider configured", which is the honest thing to show either way.
       set({ aiProviders: [] });
     }
+  },
+
+  showRoutines: (() => {
+    try { return localStorage.getItem('downpick.explorer.showRoutines') !== 'false'; }
+    catch { return true; }
+  })(),
+  setShowRoutines: (enabled) => {
+    try { localStorage.setItem('downpick.explorer.showRoutines', String(enabled)); }
+    catch { /* Keep the preference for this session when storage is unavailable. */ }
+    set({ showRoutines: enabled });
   },
 
   persistTabs: persistTabsEnabled,

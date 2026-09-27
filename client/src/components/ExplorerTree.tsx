@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore, ColumnNode, IndexNode, DbType, SavedConnection } from '../store';
+import { useStore, ColumnNode, IndexNode, RoutineNode, DbType, SavedConnection } from '../store';
 import { api, copyToClipboard } from '../api';
 import { ConnectionDialog } from './ConnectionDialog';
 import { Icon, IconName } from './Icon';
@@ -56,7 +56,7 @@ const DEFAULT_OPEN_SCHEMAS = new Set(['public', 'dbo', 'collections']);
 const MENU_WIDTH = 170;
 const INDENT = 12;
 
-type RowKind = 'connection' | 'database' | 'schema' | 'table' | 'group' | 'column' | 'index';
+type RowKind = 'connection' | 'database' | 'schema' | 'table' | 'group' | 'column' | 'index' | 'routine';
 
 interface Row {
   key: string;
@@ -83,6 +83,7 @@ interface Row {
   table?: string;
   column?: ColumnNode;
   index?: IndexNode;
+  routine?: RoutineNode;
 }
 
 // `circle-filled` fills itself with currentColor, so the status colour is a text class.
@@ -143,6 +144,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
 
   const [editingConn, setEditingConn] = useState<SavedConnection | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const showRoutines = useStore((s) => s.showRoutines);
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -332,6 +334,29 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
     focusOrOpenTab(row.conn, row.database!, sql);
   }
 
+  const routineRequests = useRef(new Set<string>());
+
+  async function loadRoutineScript(row: Row, action: 'open' | 'copy') {
+    if (routineRequests.current.has(row.key)) return;
+    routineRequests.current.add(row.key);
+    try {
+      const { script } = await api.routineDefinition(row.conn.id, row.database!, row.routine!.id);
+      if (action === 'open') {
+        openTab(row.conn.id, row.conn.name, row.database!, script);
+      } else {
+        await copyToClipboard({ text: script });
+        useStore.getState().pushToast({ kind: 'info', title: 'Script copied', body: row.label });
+      }
+    } catch (error) {
+      useStore.getState().pushToast({
+        kind: 'warning', title: 'Could not load routine script',
+        body: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      routineRequests.current.delete(row.key);
+    }
+  }
+
   function copy(text: string) {
     void copyToClipboard({ text }).catch(() => {
       // Nothing actionable to say for a failed clipboard write from a menu item.
@@ -361,6 +386,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
         toggle(row.key, row.kind === 'schema' && DEFAULT_OPEN_SCHEMAS.has(row.label));
         return;
       case 'column':
+      case 'routine':
       case 'index':
         return;
     }
@@ -447,6 +473,12 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
           },
           { label: 'Copy index name', onSelect: () => copy(row.index!.name) },
           { label: 'Copy type', onSelect: () => copy(row.index!.type) },
+        ];
+      case 'routine':
+        return [
+          { label: 'Open script in editor', onSelect: () => void loadRoutineScript(row, 'open') },
+          { label: 'Copy script', onSelect: () => void loadRoutineScript(row, 'copy') },
+          { label: 'Copy name', onSelect: () => copy(row.routine!.name) },
         ];
       case 'group':
         return [];
@@ -629,6 +661,36 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                 }
               }
 
+              if (scOpen && showRoutines && (conn.type === 'postgres' || conn.type === 'sqlserver')) {
+                for (const kind of ['function', 'procedure'] as const) {
+                  const label = kind === 'function' ? 'Functions' : 'Procedures';
+                  const routines = (schemaNode.routines ?? []).filter((routine) => routine.kind === kind);
+                  const matching = routines.filter((routine) => scMatch || hit(label) ||
+                    hit(routine.name) || hit(routine.arguments ?? ''));
+                  if (q && !scMatch && !hit(label) && matching.length === 0) continue;
+                  // Empty segment keeps group keys distinct from table identifiers.
+                  const groupKey = rowKey(scKey, '', kind);
+                  const groupOpen = isOpen(groupKey, false);
+                  tableRows.push({
+                    key: groupKey, kind: 'group', depth: 3, label,
+                    icon: 'schema-folder',
+                    chevron: routines.length ? (groupOpen ? 'down' : 'right') : null,
+                    meta: String(routines.length), labelClass: 'text-text-muted', conn,
+                  });
+                  if (groupOpen) {
+                    for (const routine of matching) {
+                      const signature = routine.arguments === undefined
+                        ? routine.name : `${routine.name}(${routine.arguments})`;
+                      tableRows.push({
+                        key: rowKey(groupKey, routine.id), kind: 'routine', depth: 4,
+                        label: signature, title: `${signature} — Double-click to open script · right-click for actions`, icon: 'routine', chevron: null,
+                        labelClass: 'text-text', conn, database, schema: schemaNode.name, routine,
+                      });
+                    }
+                  }
+                }
+              }
+
               if (q && tableRows.length === 0 && !scMatch) continue;
               dbChildren.push({
                 key: scKey,
@@ -712,6 +774,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
     expanded,
     search,
     selectedKey,
+    showRoutines,
   ]);
 
   return (
@@ -747,7 +810,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
           <input
             ref={searchInputRef}
             className="input text-xs py-1.5"
-            placeholder="Search connections, tables, columns, indexes…"
+            placeholder="Search connections, tables, columns, indexes, routines…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
@@ -766,7 +829,8 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
             key={row.key}
             row={row}
             onClick={() => handleRowClick(row)}
-            onDoubleClick={row.kind === 'table' ? () => openTableQuery(row) : undefined}
+            onDoubleClick={row.kind === 'table' ? () => openTableQuery(row)
+              : row.kind === 'routine' ? () => void loadRoutineScript(row, 'open') : undefined}
             onChevronClick={(e) => handleChevronClick(e, row)}
             onContextMenu={(e) => openMenu(e, row)}
           />

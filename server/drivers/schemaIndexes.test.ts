@@ -12,7 +12,7 @@ for (const dialect of ['postgres', 'sqlserver'] as const) {
     const catalog = (query: string, params: unknown[] = []): Record<string, unknown>[] => {
       if (/current_database\(\)|DB_NAME\(\)/i.test(query)) return [{ name: 'app' }];
       if (/sys.databases/.test(query)) return [{ name: 'app' }];
-      if (/information_schema.schemata|SELECT DISTINCT TABLE_SCHEMA/i.test(query)) {
+      if (/information_schema.schemata|SELECT DISTINCT s.name/i.test(query)) {
         return schemas.map((schema_name) => ({ schema_name }));
       }
       if (/information_schema.tables/i.test(query)) {
@@ -41,6 +41,7 @@ for (const dialect of ['postgres', 'sqlserver'] as const) {
           { index_name: 'unique_lookup', index_type: 'BTREE', is_unique: true, is_primary: false },
         ];
       }
+      if (/pg_catalog.pg_proc|FROM sys.objects/.test(query)) return [];
       throw new Error(`Unexpected catalog query: ${query}`);
     };
 

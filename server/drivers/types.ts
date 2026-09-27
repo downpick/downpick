@@ -45,9 +45,18 @@ export interface DatabaseNode {
   schemas: SchemaNode[];
 }
 
+export interface RoutineNode {
+  id: string;
+  name: string;
+  kind: 'function' | 'procedure';
+  /** Identity arguments distinguish overloaded PostgreSQL routines. */
+  arguments?: string;
+}
+
 export interface SchemaNode {
   name: string;
   tables: TableNode[];
+  routines?: RoutineNode[];
 }
 
 export interface TableNode {
@@ -76,6 +85,7 @@ export interface Driver {
   getDatabases(): Promise<string[]>;
   executeQuery(sql: string, onCancel?: (cancel: () => void) => void): Promise<QueryResult>;
   getSchemaTree(): Promise<SchemaTree>;
+  getRoutineDefinition?(id: string): Promise<string>;
   close(): Promise<void>;
   /**
    * Infers field names and types by sampling documents, for stores that declare no schema.

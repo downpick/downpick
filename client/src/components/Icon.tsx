@@ -12,6 +12,7 @@ import type { ReactElement, SVGProps } from 'react';
  * icons-react` gives the identical shapes if this ever wants to come from a package.
  */
 export type IconName =
+  | 'routine'
   | 'server'
   | 'database'
   | 'table'
@@ -30,6 +31,9 @@ export type IconName =
   | 'brand-mongodb';
 
 const PATHS: Record<IconName, ReactElement> = {
+  'routine': (
+    <><path d="M8 7l-5 5l5 5M16 7l5 5l-5 5M14 4l-4 16" /></>
+  ),
   'server': (
     <><path d="M3 4m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z" /><path d="M3 12m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z" /><path d="M7 8l0 .01" /><path d="M7 16l0 .01" /></>
   ),

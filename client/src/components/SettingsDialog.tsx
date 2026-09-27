@@ -116,6 +116,8 @@ export function SettingsDialog({
   initialTab?: SettingsSection;
 }) {
   const [section, setSection] = useState<SettingsSection>(initialTab);
+  const showRoutines = useStore((s) => s.showRoutines);
+  const [pendingShowRoutines, setPendingShowRoutines] = useState(showRoutines);
   const persistTabs = useStore((s) => s.persistTabs);
   const setPersistTabs = useStore.getState().setPersistTabs;
 
@@ -269,6 +271,9 @@ export function SettingsDialog({
         });
         applyValidation(result);
       }
+      if (pendingShowRoutines !== showRoutines) {
+        useStore.getState().setShowRoutines(pendingShowRoutines);
+      }
       onClose();
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : 'Failed to save settings');
@@ -281,6 +286,7 @@ export function SettingsDialog({
     settings !== null &&
     (inputPath.trim() !== settings.vaultFilePath ||
       pendingPersistTabs !== persistTabs ||
+      pendingShowRoutines !== showRoutines ||
       parsedTimeout !== settings.queryTimeoutSeconds ||
       parsedAutoLock !== settings.autoLockMinutes ||
       pendingNotify !== settings.notifyOnQueryFinish ||
@@ -360,6 +366,28 @@ export function SettingsDialog({
                       <span className="text-sm text-text">Restore open tabs on launch</span>
                       <span className="block text-xs text-text-dim mt-0.5">
                         Remember which tabs were open and reopen them next time you start the app.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="h-px bg-surface-2" />
+
+                <div>
+                  <span className="text-xs text-text-muted uppercase tracking-wide">
+                    Explorer
+                  </span>
+                  <label className="flex items-start gap-2.5 mt-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 accent-accent w-4 h-4 cursor-pointer"
+                      checked={pendingShowRoutines}
+                      onChange={(e) => setPendingShowRoutines(e.target.checked)}
+                    />
+                    <span>
+                      <span className="text-sm text-text">Show functions and procedures</span>
+                      <span className="block text-xs text-text-dim mt-0.5">
+                        Display functions and procedures in the connection tree for PostgreSQL and SQL Server.
                       </span>
                     </span>
                   </label>
