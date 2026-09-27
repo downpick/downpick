@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import { copyResult, exportCsv, exportXlsx } from '../resultExport';
+import { copyResult, copyResultJson, exportCsv, exportXlsx } from '../resultExport';
 import { summarizeResult } from '../summarizeResult';
 import { ElapsedTime } from './ElapsedTime';
 
@@ -24,6 +24,7 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
   const { openSettings, setTabViewMode, setTabResultView } = useStore.getState();
 
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [jsonCopyStatus, setJsonCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
   const result = activeTab && !activeTab.isRunning ? activeTab.result : null;
   const resultView = activeTab?.resultView ?? 'results';
@@ -35,6 +36,12 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
     if (!result) return;
     setCopyStatus((await copyResult(result)) ? 'copied' : 'error');
     setTimeout(() => setCopyStatus('idle'), 1500);
+  }
+
+  async function onCopyJson() {
+    if (!result) return;
+    setJsonCopyStatus((await copyResultJson(result)) ? 'copied' : 'error');
+    setTimeout(() => setJsonCopyStatus('idle'), 1500);
   }
 
   return (
@@ -144,8 +151,7 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
             </>
           )}
 
-          {/* A result with no rows has nothing to carry anywhere — these would write an
-              empty file. */}
+          {/* Export controls are shared by every database driver. */}
           {hasResultSet && (
             <div className="flex items-center gap-1 flex-shrink-0">
               <button
@@ -159,6 +165,18 @@ export function StatusBar({ onLockVault }: { onLockVault: () => void }) {
                   : copyStatus === 'error'
                     ? 'Copy failed'
                     : 'Copy'}
+              </button>
+              <button
+                className={`${BAR_BUTTON} ${jsonCopyStatus === 'error' ? 'text-error' : ''}`}
+                onClick={() => void onCopyJson()}
+                title="Copy the result as JSON"
+              >
+                <CopyIcon className="w-[13px] h-[13px] flex-shrink-0" />
+                {jsonCopyStatus === 'copied'
+                  ? 'Copied!'
+                  : jsonCopyStatus === 'error'
+                    ? 'Copy failed'
+                    : 'JSON'}
               </button>
               <button
                 className={BAR_BUTTON}

@@ -98,6 +98,33 @@ export function exportXlsx(result: QueryResult): void {
   );
 }
 
+/** Copy native documents or column-keyed rows, preserving nested values and nulls. */
+export async function copyResultJson(result: QueryResult): Promise<boolean> {
+  try {
+    // Reserve original names so generated keys never overwrite another column.
+    const reserved = new Set(result.columns);
+    const used = new Set<string>();
+    const keys = result.columns.map((column, index) => {
+      const base = column || `column_${index + 1}`;
+      let key = base;
+      let suffix = 2;
+      while (used.has(key) || (key !== column && reserved.has(key))) {
+        key = `${base}_${suffix++}`;
+      }
+      used.add(key);
+      return key;
+    });
+    const data = result.documents ?? result.rows.map((row) =>
+      Object.fromEntries(keys.map((key, index) => [key, row[index] ?? null])),
+    );
+    await copyToClipboard({ text: JSON.stringify(data, null, 2) });
+    return true;
+  } catch (e) {
+    console.error('Failed to copy JSON to clipboard', e);
+    return false;
+  }
+}
+
 /** Resolves false when the clipboard refused the write, so the caller can say so. */
 export async function copyResult(result: QueryResult): Promise<boolean> {
   // text/plain fallback as TSV (pastes as columns in editors/spreadsheets)
