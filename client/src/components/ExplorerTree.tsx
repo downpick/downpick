@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore, ColumnNode, DbType, SavedConnection } from '../store';
+import { useStore, ColumnNode, IndexNode, DbType, SavedConnection } from '../store';
 import { api, copyToClipboard } from '../api';
 import { ConnectionDialog } from './ConnectionDialog';
 import { Icon, IconName } from './Icon';
@@ -12,7 +12,7 @@ import { Icon, IconName } from './Icon';
  * them, which meant the thing you clicked to connect and the thing that appeared when you
  * did were in different places — and the top panel's height was a permanent negotiation.
  * Here a connection *is* the root of its own subtree: connection → database → schema →
- * table → column.
+ * table → columns/indexes → column/index.
  *
  * Rows are flattened into a single list rather than rendered as nested components. The
  * indent guides need to know their depth, filtering has to be able to drop a whole branch,
@@ -56,7 +56,7 @@ const DEFAULT_OPEN_SCHEMAS = new Set(['public', 'dbo', 'collections']);
 const MENU_WIDTH = 170;
 const INDENT = 12;
 
-type RowKind = 'connection' | 'database' | 'schema' | 'table' | 'column';
+type RowKind = 'connection' | 'database' | 'schema' | 'table' | 'group' | 'column' | 'index';
 
 interface Row {
   key: string;
@@ -82,6 +82,7 @@ interface Row {
   schema?: string;
   table?: string;
   column?: ColumnNode;
+  index?: IndexNode;
 }
 
 // `circle-filled` fills itself with currentColor, so the status colour is a text class.
@@ -101,6 +102,8 @@ interface MenuItemSpec {
   label: string;
   onSelect: () => void;
   danger?: boolean;
+  disabled?: boolean;
+  title?: string;
 }
 
 interface MenuState {
@@ -353,15 +356,18 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
         return;
       case 'schema':
       case 'table':
+      case 'group':
+        if (!row.chevron) return;
         toggle(row.key, row.kind === 'schema' && DEFAULT_OPEN_SCHEMAS.has(row.label));
         return;
       case 'column':
+      case 'index':
         return;
     }
   }
 
   function handleChevronClick(e: React.MouseEvent, row: Row) {
-    if (row.kind === 'column') return;
+    if (!row.chevron) return;
     e.stopPropagation();
     if (row.kind === 'connection') {
       if (activeConnections[row.conn.id]) toggle(row.conn.id, true);
@@ -429,6 +435,21 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
           { label: 'Copy column name', onSelect: () => copy(row.column!.name) },
           { label: 'Copy type', onSelect: () => copy(row.column!.type) },
         ];
+      case 'index':
+        return [
+          {
+            label: 'Copy creation script',
+            onSelect: () => copy(row.index!.creationScript!),
+            disabled: !row.index!.creationScript,
+            title: row.index!.creationScript
+              ? 'Copy SQL to recreate this index'
+              : 'Creation script is unavailable for this index type or its metadata is not visible',
+          },
+          { label: 'Copy index name', onSelect: () => copy(row.index!.name) },
+          { label: 'Copy type', onSelect: () => copy(row.index!.type) },
+        ];
+      case 'group':
+        return [];
     }
   }
 
@@ -436,6 +457,10 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
     e.preventDefault();
     e.stopPropagation();
     const items = menuItemsFor(row);
+    if (items.length === 0) {
+      setMenu(null);
+      return;
+    }
     setMenu({
       x: Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_WIDTH - 8)),
       // ~30px per item plus the menu's own padding, so a right-click near the bottom edge
@@ -508,7 +533,9 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
 
               if (scOpen) {
                 for (const table of schemaNode.tables) {
-                  if (q && !dbMatch && !hit(table.name)) continue;
+                  const tableMatch = scMatch || hit(table.name);
+                  if (q && !tableMatch && !table.columns.some((col) => hit(col.name)) &&
+                      !table.indexes?.some((index) => hit(index.name))) continue;
                   const tKey = rowKey(conn.id, database, schemaNode.name, table.name);
                   const tOpen = isOpen(tKey, false);
                   tableRows.push({
@@ -526,11 +553,31 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                     table: table.name,
                   });
                   if (!tOpen) continue;
-                  for (const column of table.columns) {
+                  const grouped = table.indexes !== undefined;
+                  const columnsKey = rowKey(tKey, 'columns');
+                  const indexesKey = rowKey(tKey, 'indexes');
+                  const columnsOpen = isOpen(columnsKey, false);
+                  const indexesOpen = isOpen(indexesKey, false);
+                  if (grouped) {
                     tableRows.push({
-                      key: rowKey(conn.id, database, schemaNode.name, table.name, column.name),
-                      kind: 'column',
+                      key: columnsKey,
+                      kind: 'group',
                       depth: 4,
+                      label: 'Columns',
+                      icon: 'schema-folder',
+                      chevron: table.columns.length ? (columnsOpen ? 'down' : 'right') : null,
+                      meta: String(table.columns.length),
+                      title: table.columns.length ? 'Columns' : 'No columns',
+                      labelClass: 'text-text-muted',
+                      conn,
+                    });
+                  }
+                  for (const column of !grouped || columnsOpen ? table.columns : []) {
+                    if (q && !tableMatch && !hit(column.name)) continue;
+                    tableRows.push({
+                      key: rowKey(columnsKey, column.name),
+                      kind: 'column',
+                      depth: grouped ? 5 : 4,
                       label: column.name,
                       icon: 'column',
                       iconClass: 'text-text-dim',
@@ -544,6 +591,40 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                       table: table.name,
                       column,
                     });
+                  }
+                  if (grouped) {
+                    const indexes = table.indexes!;
+                    tableRows.push({
+                      key: indexesKey,
+                      kind: 'group',
+                      depth: 4,
+                      label: 'Indexes',
+                      icon: 'schema-folder',
+                      chevron: indexes.length ? (indexesOpen ? 'down' : 'right') : null,
+                      meta: String(indexes.length),
+                      title: indexes.length ? 'Indexes' : 'No indexes',
+                      labelClass: 'text-text-muted',
+                      conn,
+                    });
+                    if (indexesOpen) {
+                      for (const index of indexes) {
+                        if (q && !tableMatch && !hit(index.name)) continue;
+                        const flags = index.primary ? 'PK' : index.unique ? 'UNIQUE' : '';
+                        tableRows.push({
+                          key: rowKey(indexesKey, index.name),
+                          kind: 'index',
+                          depth: 5,
+                          label: index.name,
+                          icon: 'key',
+                          chevron: null,
+                          meta: flags || index.type,
+                          title: `${index.name} — ${index.type}${index.primary ? ' · Primary key' : ''}${index.unique ? ' · Unique' : ''}`,
+                          labelClass: 'text-text',
+                          conn,
+                          index,
+                        });
+                      }
+                    }
                   }
                 }
               }
@@ -666,7 +747,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
           <input
             ref={searchInputRef}
             className="input text-xs py-1.5"
-            placeholder="Search connections, databases, tables…"
+            placeholder="Search connections, tables, columns, indexes…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
@@ -725,7 +806,9 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                 key={item.label}
                 type="button"
                 role="menuitem"
-                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-2 ${
+                disabled={item.disabled}
+                title={item.title}
+                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed ${
                   item.danger ? 'text-error' : 'text-text'
                 }`}
                 onClick={() => {
@@ -771,8 +854,8 @@ function TreeRow({
         }`}
         style={{
           paddingLeft: 8 + row.depth * INDENT,
-          paddingTop: row.depth === 0 ? 6 : row.kind === 'column' ? 2 : 4,
-          paddingBottom: row.depth === 0 ? 6 : row.kind === 'column' ? 2 : 4,
+          paddingTop: row.depth === 0 ? 6 : row.kind === 'column' || row.kind === 'index' ? 2 : 4,
+          paddingBottom: row.depth === 0 ? 6 : row.kind === 'column' || row.kind === 'index' ? 2 : 4,
           // One hairline per ancestor level, so a deep row shows what it hangs off. Painted
           // as a background image (not borders) to keep every row a single flat element —
           // the hover colour shows through the gaps between the lines.

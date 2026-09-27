@@ -2,6 +2,7 @@ import * as sql from 'mssql';
 import { ConnectionConfigWithPassword } from '../connections';
 import { Driver, QueryResult, SchemaTree, DatabaseNode, SchemaNode, StatementSummary, TableNode, ColumnNode } from './types';
 import { totalRowsAffected } from './statements';
+import { sqlServerIndexScript } from './sqlServerIndexScript';
 
 export class SqlServerDriver implements Driver {
   private pool: sql.ConnectionPool | null = null;
@@ -191,7 +192,42 @@ export class SqlServerDriver implements Driver {
               nullable: col.is_nullable === 'YES',
             }));
 
-            return { name: tableName, columns };
+            const indexesResult = await pool
+              .request()
+              .input('schema', sql.NVarChar, schemaName)
+              .input('table', sql.NVarChar, tableName)
+              .query(`
+                SELECT i.name AS index_name, i.type_desc AS index_type,
+                       i.is_unique, i.is_primary_key AS is_primary,
+                       i.type AS type_id, t.is_memory_optimized,
+                       i.has_filter, i.filter_definition, kc.name AS constraint_name,
+                       (SELECT c.name, ic.key_ordinal, ic.is_descending_key, ic.is_included_column
+                        FROM sys.index_columns ic
+                        JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                        WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id
+                        ORDER BY ic.key_ordinal, ic.index_column_id
+                        FOR JSON PATH) AS index_columns
+                FROM sys.indexes i
+                JOIN sys.tables t ON t.object_id = i.object_id
+                JOIN sys.schemas s ON s.schema_id = t.schema_id
+                LEFT JOIN sys.key_constraints kc
+                  ON kc.parent_object_id = i.object_id AND kc.unique_index_id = i.index_id
+                WHERE s.name = @schema AND t.name = @table
+                  AND i.index_id > 0 AND i.is_hypothetical = 0
+                ORDER BY i.name
+              `);
+
+            return {
+              name: tableName,
+              columns,
+              indexes: indexesResult.recordset.map((index: Record<string, unknown>) => ({
+                name: index.index_name as string,
+                type: index.index_type as string,
+                unique: index.is_unique as boolean,
+                primary: index.is_primary as boolean,
+                creationScript: sqlServerIndexScript(schemaName, tableName, index),
+              })),
+            };
           })
         );
 

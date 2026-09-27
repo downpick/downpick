@@ -152,12 +152,33 @@ export class PostgresDriver implements Driver {
               [schemaName, tableName]
             );
 
+            const indexesResult = await this.pool.query(
+              `SELECT idx.relname AS index_name, am.amname AS index_type,
+                      i.indisunique AS is_unique, i.indisprimary AS is_primary,
+                      pg_catalog.pg_get_indexdef(i.indexrelid) AS creation_script
+               FROM pg_catalog.pg_index i
+               JOIN pg_catalog.pg_class tbl ON tbl.oid = i.indrelid
+               JOIN pg_catalog.pg_namespace ns ON ns.oid = tbl.relnamespace
+               JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
+               JOIN pg_catalog.pg_am am ON am.oid = idx.relam
+               WHERE ns.nspname = $1 AND tbl.relname = $2
+               ORDER BY idx.relname`,
+              [schemaName, tableName]
+            );
+
             return {
               name: tableName,
               columns: columnsResult.rows.map((col) => ({
                 name: col.column_name as string,
                 type: col.data_type as string,
                 nullable: col.is_nullable === 'YES',
+              })),
+              indexes: indexesResult.rows.map((index) => ({
+                name: index.index_name as string,
+                type: index.index_type as string,
+                unique: index.is_unique as boolean,
+                primary: index.is_primary as boolean,
+                creationScript: index.creation_script ? `${index.creation_script};` : undefined,
               })),
             };
           })

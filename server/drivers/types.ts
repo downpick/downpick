@@ -53,6 +53,16 @@ export interface SchemaNode {
 export interface TableNode {
   name: string;
   columns: ColumnNode[];
+  /** Present when the driver supports browsing indexes. */
+  indexes?: IndexNode[];
+}
+
+export interface IndexNode {
+  name: string;
+  type: string;
+  unique: boolean;
+  primary: boolean;
+  creationScript?: string;
 }
 
 export interface ColumnNode {
