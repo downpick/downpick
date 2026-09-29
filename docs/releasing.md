@@ -143,12 +143,14 @@ checks the committed dependency graph rather than silently rewriting it on the b
 
 ## 4. Commit, create the annotated tag, and push
 
-Review the release version changes and commit them. Other application changes intended for the
+Prepare `docs/releases/$VERSION.md` with the release notes, then review the version changes and
+commit them. The workflow uses this file for the draft body when present, including on reruns;
+otherwise it falls back to GitHub-generated notes. Other application changes intended for the
 release should already be committed:
 
 ```bash
 git diff --check
-git add package.json package-lock.json
+git add package.json package-lock.json "docs/releases/$VERSION.md"
 git diff --cached
 git commit -m "Version $VERSION"
 ```
@@ -281,7 +283,11 @@ describe those builds as Developer ID-signed releases.
 
 ## 7. Write the release notes
 
-Start from the workflow's generated notes and edit a local file. Set `EDITOR` to your preferred
+The workflow loads `docs/releases/$VERSION.md` when present. Review the draft's notes and confirm
+the actual signing status after inspecting the packages. A rerun replaces the draft body with
+the committed notes, so keep persistent corrections in that file for future releases.
+
+To make final edits, download the draft's current notes to a local file. Set `EDITOR` to your preferred
 editor; this example uses `nano`:
 
 ```bash

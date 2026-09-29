@@ -1,7 +1,7 @@
 {
   "name": "downpick",
   "productName": "Downpick",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "packageManager": "npm@11.19.0",
   "description": "Standalone desktop database manager for PostgreSQL, SQL Server, Oracle, and MongoDB",
   "author": "Downpick",

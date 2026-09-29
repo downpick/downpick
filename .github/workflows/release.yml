@@ -100,10 +100,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          notes_file="docs/releases/${GITHUB_REF_NAME#v}.md"
           if gh release view "$GITHUB_REF_NAME" --json isDraft > release-state.json; then
             node -e "if (!require('./release-state.json').isDraft) { console.error('Refusing to replace a published release'); process.exit(1); }"
+            if [ -f "$notes_file" ]; then
+              gh release edit "$GITHUB_REF_NAME" --notes-file "$notes_file"
+            fi
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Downpick ${GITHUB_REF_NAME#v}" --generate-notes
+            if [ -f "$notes_file" ]; then
+              gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Downpick ${GITHUB_REF_NAME#v}" --notes-file "$notes_file"
+            else
+              gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Downpick ${GITHUB_REF_NAME#v}" --generate-notes
+            fi
           fi
           cd release
           sha256sum *.dmg *.zip *.exe *.AppImage > SHA256SUMS.txt
