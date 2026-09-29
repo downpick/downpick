@@ -101,3 +101,19 @@ test('the engine label is used for non-Oracle types too', () => {
     /PostgreSQL is running/,
   );
 });
+
+test('PostgreSQL unencrypted pg_hba rejection is not classified as a bad password', () => {
+  const ctx = { type: 'postgres' as const, host: 'db.rds.amazonaws.com', port: 5432, username: 'app' };
+  for (const suffix of ['no encryption', 'SSL off']) {
+    const message = describeConnectionError({ code: '28000', message: `no pg_hba.conf entry for host "client", user "app", database "postgres", ${suffix}` }, ctx);
+    assert.match(message, /Enable TLS/);
+    assert.doesNotMatch(message, /Check the username and password/);
+  }
+  assert.match(describeConnectionError({ code: '28P01', message: 'password authentication failed' }, ctx), /Check the username and password/);
+  assert.match(describeConnectionError({ code: '28000', message: 'no pg_hba.conf entry for host "client", SSL encryption' }, ctx), /access rules/);
+});
+
+test('nested certificate failures explain trust configuration', () => {
+  const message = describeConnectionError({ code: 'ESOCKET', originalError: { code: 'SELF_SIGNED_CERT_IN_CHAIN', message: 'self-signed certificate in certificate chain' } }, { type: 'sqlserver', host: 'db', port: 1433 });
+  assert.match(message, /TLS certificate verification failed/);
+});

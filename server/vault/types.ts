@@ -8,8 +8,12 @@ export interface ConnectionConfig {
   port: number;
   /** Never persisted — injected at runtime by open-db. */
   database?: string;
+  initialDatabase?: string;
+  tlsMode?: 'default' | 'verify' | 'require' | 'disable';
+  /** Optional trusted CA certificates in PEM format. */
+  tlsCa?: string;
   /**
-   * Oracle only, and the one address field that IS persisted.
+   * Oracle service name, persisted as part of the address.
    *
    * Every other engine discovers its databases from the server (pg_database, sys.databases,
    * listDatabases), so `database` above can be left out of the record and injected when the
@@ -40,6 +44,10 @@ export interface StoredConnection {
   type: DbType;
   host: string;
   port: number;
+  initialDatabase?: string;
+  tlsMode?: 'default' | 'verify' | 'require' | 'disable';
+  /** Optional trusted CA certificates in PEM format. */
+  tlsCa?: string;
   /** Oracle only — see the note on ConnectionConfig.serviceName. Undefined for every other type. */
   serviceName?: string;
   username: string;

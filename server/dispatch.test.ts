@@ -635,3 +635,50 @@ test('history rejects a save with nothing usable in it', async () => {
   });
   assert.equal(res.status, 400);
 });
+
+test('connection TLS and initial database survive save, unlock, test and database selection', async () => {
+  const registry = require('./drivers/registry') as typeof import('./drivers/registry');
+  const original = registry.createDriver;
+  const observed: import('./connections').ConnectionConfigWithPassword[] = [];
+  registry.createDriver = (_type, config) => {
+    observed.push(config);
+    return {
+      async testConnection() {},
+      async getDatabases() { return ['app']; },
+      async getSchemaTree() { return { databases: [] }; },
+      async executeQuery() { throw new Error('not used'); },
+      async close() {},
+    };
+  };
+  let id: string | undefined;
+  try {
+    const profile = { name: 'TLS', type: 'postgres', host: 'db', port: 5432, username: 'app', password: 'secret', initialDatabase: 'app', tlsMode: 'verify', tlsCa: 'public CA' };
+    ({ id } = await ok<{ id: string }>('connections:create', profile));
+    await ok('vault:lock');
+    await ok('vault:unlock', { password: PASSWORD });
+    const saved = (await ok<import('./connections').ConnectionConfig[]>('connections:list')).find((c) => c.id === id)!;
+    assert.equal(saved.tlsMode, 'verify');
+    assert.equal(saved.tlsCa, 'public CA');
+    assert.equal(saved.initialDatabase, 'app');
+    assert.equal('password' in saved, false);
+    assert.equal((await ok<{ ok: boolean }>('connections:test', { ...saved })).ok, true);
+    await ok('connections:connect', { id });
+    await ok('connections:openDb', { id, database: 'other' });
+    assert.equal(observed.length, 3);
+    for (const config of observed) {
+      assert.equal(config.tlsMode, 'verify');
+      assert.equal(config.tlsCa, 'public CA');
+      assert.equal(config.initialDatabase, 'app');
+      assert.equal(config.password, 'secret');
+    }
+    assert.equal(observed[2].database, 'other');
+    await ok('connections:update', { ...saved, tlsMode: 'disable', tlsCa: '', initialDatabase: 'changed' });
+    await ok('connections:connect', { id });
+    assert.equal(observed[3].tlsMode, 'disable');
+    assert.equal(observed[3].tlsCa, '');
+    assert.equal(observed[3].initialDatabase, 'changed');
+  } finally {
+    if (id) await ok('connections:delete', { id });
+    registry.createDriver = original;
+  }
+});

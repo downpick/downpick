@@ -136,6 +136,12 @@ export function describeConnectionError(err: unknown, ctx: ConnectionErrorContex
       `Timed out connecting to ${target}. The host may be unreachable or a firewall may be dropping the connection — check the host, port, and any VPN or firewall rules.`,
     );
   }
+  if (has('SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID')) {
+    return withDetail(`TLS certificate verification failed for ${target}. Check the hostname, certificate expiry, and trusted CA certificates in the connection settings.`);
+  }
+  if (has('ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION', 'ERR_SSL_NO_SHARED_CIPHER')) {
+    return withDetail(`TLS negotiation failed for ${target}. Check that the server supports modern TLS versions and compatible ciphers.`);
+  }
   if (has('ECONNRESET', 'EPIPE')) {
     return withDetail(
       `The connection to ${target} was closed by the server. This often means TLS is required, or the port belongs to a different service.`,
@@ -170,6 +176,12 @@ export function describeConnectionError(err: unknown, ctx: ConnectionErrorContex
   }
 
   if (ctx.type === 'postgres') {
+    if (lower.includes('no pg_hba.conf entry')) {
+      if (lower.includes('no encryption') || lower.includes('ssl off')) {
+        return withDetail(`${target} refused an unencrypted PostgreSQL connection. Enable TLS in the connection settings and verify the server CA certificate. If it still fails, check the server's pg_hba.conf access rules.`);
+      }
+      return withDetail(`${target} refused the connection for this client address. Check the server's pg_hba.conf access rules for this user and database.`);
+    }
     if (has('28P01', '28000')) return withDetail(authHint(ctx));
     if (has('3D000')) {
       return withDetail(
@@ -180,11 +192,6 @@ export function describeConnectionError(err: unknown, ctx: ConnectionErrorContex
     }
     if (has('53300')) {
       return withDetail(`${target} has too many open connections and refused a new one.`);
-    }
-    if (lower.includes('no pg_hba.conf entry')) {
-      return withDetail(
-        `${target} refused the connection for this client address. The server's pg_hba.conf does not allow it — check the host-based authentication rules.`,
-      );
     }
   }
 

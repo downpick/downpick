@@ -2,6 +2,7 @@ import { Pool, PoolClient, QueryResult as PgQueryResult } from 'pg';
 import { ConnectionConfigWithPassword } from '../connections';
 import { Driver, QueryResult, SchemaTree, SchemaNode, StatementSummary, TableNode, RoutineNode } from './types';
 import { totalRowsAffected } from './statements';
+import { postgresTls } from './tls';
 
 // PostgreSQL built-in type OIDs → human-readable names.
 // Covers the types commonly seen in query results; unknown OIDs fall back to "oid:<n>".
@@ -20,7 +21,8 @@ export class PostgresDriver implements Driver {
     this.pool = new Pool({
       host: config.host,
       port: config.port,
-      database: config.database || 'postgres',
+      database: config.database || config.initialDatabase || 'postgres',
+      ssl: postgresTls(config),
       user: config.username,
       password: config.password,
       connectionTimeoutMillis: 10000,

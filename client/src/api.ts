@@ -169,6 +169,10 @@ export const api = {
     type: DbType;
     host: string;
     port: number;
+    initialDatabase?: string;
+    tlsMode?: 'default' | 'verify' | 'require' | 'disable';
+    /** Optional trusted CA certificates in PEM format. */
+    tlsCa?: string;
     /** Oracle only; ignored by every other engine. */
     serviceName?: string;
     username: string;
@@ -179,6 +183,10 @@ export const api = {
     type: DbType;
     host: string;
     port: number;
+    initialDatabase?: string;
+    tlsMode?: 'default' | 'verify' | 'require' | 'disable';
+    /** Optional trusted CA certificates in PEM format. */
+    tlsCa?: string;
     serviceName?: string;
     username: string;
     password?: string;
@@ -191,7 +199,11 @@ export const api = {
     type: DbType;
     host: string;
     port: number;
-    // Same fallback rule as the password: blank on an existing profile means "use the stored one".
+    initialDatabase?: string;
+    tlsMode?: 'default' | 'verify' | 'require' | 'disable';
+    /** Optional trusted CA certificates in PEM format. */
+    tlsCa?: string;
+    // Blank on an existing profile means "use the stored service name".
     serviceName?: string;
     username: string;
     password?: string;

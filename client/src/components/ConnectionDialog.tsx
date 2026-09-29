@@ -9,6 +9,9 @@ interface ConnectionFormData {
   port: string;
   /** Oracle only. Kept in the form for every type so `field()` can clear it on a type change. */
   serviceName: string;
+  initialDatabase: string;
+  tlsMode: NonNullable<SavedConnection['tlsMode']>;
+  tlsCa: string;
   username: string;
   password: string;
 }
@@ -19,6 +22,9 @@ const defaultForm = (): ConnectionFormData => ({
   host: 'localhost',
   port: '5432',
   serviceName: '',
+  initialDatabase: '',
+  tlsMode: 'default',
+  tlsCa: '',
   username: '',
   password: '',
 });
@@ -39,6 +45,9 @@ export function ConnectionDialog({
           host: connection.host,
           port: String(connection.port),
           serviceName: connection.serviceName ?? '',
+          initialDatabase: connection.initialDatabase ?? '',
+          tlsMode: connection.tlsMode ?? 'default',
+          tlsCa: connection.tlsCa ?? '',
           username: connection.username,
           password: '',
         }
@@ -69,10 +78,19 @@ export function ConnectionDialog({
         // under Oracle survives a switch to Postgres and gets persisted on a record that has no
         // use for it.
         if (value !== 'oracle') next.serviceName = '';
+        next.initialDatabase = '';
+        next.tlsMode = 'default';
+        next.tlsCa = '';
       }
       return next;
     });
   }
+
+  const transport = form.type === 'postgres' || form.type === 'sqlserver' ? {
+    initialDatabase: form.initialDatabase.trim() || undefined,
+    tlsMode: form.tlsMode,
+    tlsCa: form.tlsCa.trim() || undefined,
+  } : {};
 
   async function handleTest() {
     const port = parseInt(form.port, 10);
@@ -88,6 +106,7 @@ export function ConnectionDialog({
         // On edit, let the server fall back to the stored password when the field is blank
         ...(connection ? { id: connection.id } : {}),
         ...(form.type === 'oracle' ? { serviceName: form.serviceName } : {}),
+        ...transport,
         type: form.type,
         host: form.host,
         port,
@@ -129,6 +148,7 @@ export function ConnectionDialog({
       if (connection) {
         await api.updateConnection(connection.id, {
           name: form.name,
+          ...transport,
           type: form.type,
           host: form.host,
           port,
@@ -142,6 +162,7 @@ export function ConnectionDialog({
         const updated: SavedConnection = {
           id: connection.id,
           name: form.name,
+          ...transport,
           type: form.type,
           host: form.host,
           port,
@@ -154,6 +175,7 @@ export function ConnectionDialog({
       } else {
         const { id } = await api.createConnection({
           name: form.name,
+          ...transport,
           type: form.type,
           host: form.host,
           port,
@@ -164,6 +186,7 @@ export function ConnectionDialog({
         const newConn: SavedConnection = {
           id,
           name: form.name,
+          ...transport,
           type: form.type,
           host: form.host,
           port,
@@ -182,7 +205,7 @@ export function ConnectionDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-surface rounded-lg shadow-2xl w-[480px] p-6 border border-surface-3">
+      <div className="bg-surface rounded-lg shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto p-6 border border-surface-3">
         <h2 className="text-lg font-semibold text-text mb-5">
           {isEdit ? 'Edit Connection' : 'New Connection'}
         </h2>
@@ -233,12 +256,6 @@ export function ConnectionDialog({
             </label>
           </div>
 
-          {/*
-            The only per-type field in this form. Oracle is the one engine that cannot enumerate
-            its databases — the service is part of the address — so it has to be asked for.
-            Deliberately left blank rather than pre-filled with a guess: a wrong service produces
-            ORA-12514, which connectionErrors.ts now explains and points back at this field.
-          */}
           {form.type === 'oracle' && (
             <label className="block">
               <span className="text-xs text-text-muted uppercase tracking-wide">Service Name</span>
@@ -285,6 +302,52 @@ export function ConnectionDialog({
                   : 'Stored in your encrypted vault'}
             </p>
           </label>
+
+          {(form.type === 'postgres' || form.type === 'sqlserver') && (
+            <details className="border-t border-surface-3 pt-3">
+              <summary className="cursor-pointer text-sm text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+                Advanced options
+              </summary>
+              <div className="mt-3 space-y-3">
+                <label className="block">
+                  <span className="text-xs text-text-muted uppercase tracking-wide">Initial Database (optional)</span>
+                  <input className="input mt-1" value={form.initialDatabase}
+                    placeholder={form.type === 'postgres' ? 'postgres' : 'master'}
+                    onChange={(e) => field('initialDatabase', e.target.value)} />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-text-muted uppercase tracking-wide">TLS / Encryption</span>
+                  <select className="input mt-1" value={form.tlsMode}
+                    onChange={(e) => field('tlsMode', e.target.value)}>
+                    <option value="default">Default (compatible with existing profiles)</option>
+                    <option value="verify">TLS — verify certificate and hostname</option>
+                    <option value="require">TLS — skip certificate verification</option>
+                    <option value="disable">Do not request encryption</option>
+                  </select>
+                  <p className="text-xs text-text-dim mt-1">
+                    {form.tlsMode === 'default'
+                      ? form.type === 'postgres'
+                        ? 'Amazon RDS uses verified TLS automatically. A custom CA also enables verified TLS; otherwise the driver default applies.'
+                        : 'SQL Server uses encryption. A custom CA enables certificate verification; otherwise verification is skipped.'
+                      : form.tlsMode === 'require'
+                        ? 'Traffic is encrypted, but the server identity is not verified.'
+                        : form.tlsMode === 'disable'
+                          ? 'Use only on trusted networks. The server may still require TLS.'
+                          : 'Verifies the server identity. Amazon RDS certificates are included.'}
+                  </p>
+                </label>
+                {(form.tlsMode === 'verify' || form.tlsMode === 'default') && (
+                  <label className="block">
+                    <span className="text-xs text-text-muted uppercase tracking-wide">CA Certificates (optional PEM)</span>
+                    <textarea className="input mt-1 font-mono text-xs" rows={3} value={form.tlsCa}
+                      placeholder="-----BEGIN CERTIFICATE-----"
+                      onChange={(e) => field('tlsCa', e.target.value)} />
+                    <p className="text-xs text-text-dim mt-1">Providing a CA enables certificate verification. Paste public CA certificates, never a private key.</p>
+                  </label>
+                )}
+              </div>
+            </details>
+          )}
         </div>
 
         {error && (

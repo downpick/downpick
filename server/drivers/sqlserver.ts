@@ -2,6 +2,7 @@ import * as sql from 'mssql';
 import { ConnectionConfigWithPassword } from '../connections';
 import { Driver, QueryResult, SchemaTree, DatabaseNode, SchemaNode, StatementSummary, TableNode, ColumnNode, RoutineNode } from './types';
 import { totalRowsAffected } from './statements';
+import { sqlServerTls } from './tls';
 import { sqlServerIndexScript } from './sqlServerIndexScript';
 
 export class SqlServerDriver implements Driver {
@@ -12,11 +13,11 @@ export class SqlServerDriver implements Driver {
     this.config = {
       server: cfg.host,
       port: cfg.port,
-      database: cfg.database || 'master',
+      database: cfg.database || cfg.initialDatabase || 'master',
       user: cfg.username,
       password: cfg.password,
       options: {
-        trustServerCertificate: true,
+        ...sqlServerTls(cfg),
         enableArithAbort: true,
         connectTimeout: 10000,
         // mssql defaults requestTimeout to 15s. Disabled here so the app's own

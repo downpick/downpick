@@ -17,6 +17,10 @@ export interface SavedConnection {
   type: DbType;
   host: string;
   port: number;
+  initialDatabase?: string;
+  tlsMode?: 'default' | 'verify' | 'require' | 'disable';
+  /** Optional trusted CA certificates in PEM format. */
+  tlsCa?: string;
   /** Oracle only — part of the address, so unlike `database` it is saved with the connection. */
   serviceName?: string;
   username: string;

@@ -58,6 +58,7 @@ function errorContext(
     port: connection.port,
     username: connection.username,
     serviceName: connection.serviceName,
+    database: connection.initialDatabase,
     ...extra,
   };
 }
@@ -67,6 +68,10 @@ interface ConnectionInput {
   type: DbType;
   host: string;
   port: number;
+  initialDatabase?: string;
+  tlsMode?: 'default' | 'verify' | 'require' | 'disable';
+  /** Optional trusted CA certificates in PEM format. */
+  tlsCa?: string;
   /** Oracle only. Optional, so TypeScript will NOT flag a handler that forgets to pass it on. */
   serviceName?: string;
   username: string;
@@ -78,13 +83,16 @@ export function registerConnectionHandlers(): void {
   registerHandler('connections:list', () => loadConnections());
 
   registerHandler('connections:create', async (body: ConnectionInput) => {
-    const { name, type, host, port, serviceName, username, password } = body;
+    const { name, type, host, port, serviceName, initialDatabase, tlsMode, tlsCa, username, password } = body;
     const id = await addConnection({
       name,
       type,
       host,
       port,
       serviceName,
+      initialDatabase,
+      tlsMode,
+      tlsCa,
       username,
       password: password ?? '',
     });
@@ -97,7 +105,7 @@ export function registerConnectionHandlers(): void {
   registerHandler(
     'connections:test',
     async (body: ConnectionInput & { id?: string }) => {
-      const { id, type, host, port, serviceName, username, password } = body ?? {};
+      const { id, type, host, port, serviceName, initialDatabase, tlsMode, tlsCa, username, password } = body ?? {};
       if (!type || !host || !Number.isFinite(port)) {
         throw new AppError(400, 'Type, host, and port are required.');
       }
@@ -115,6 +123,9 @@ export function registerConnectionHandlers(): void {
         type,
         host,
         port,
+        initialDatabase,
+        tlsMode,
+        tlsCa,
         serviceName: effectiveServiceName,
         username: username ?? '',
         password: effectivePassword,
@@ -136,6 +147,7 @@ export function registerConnectionHandlers(): void {
             host,
             port,
             username,
+            database: initialDatabase,
             serviceName: effectiveServiceName,
           }),
         };
@@ -146,11 +158,11 @@ export function registerConnectionHandlers(): void {
   );
 
   registerHandler('connections:update', async (body: ConnectionInput & { id: string }) => {
-    const { id, name, type, host, port, serviceName, username, password } = body;
+    const { id, name, type, host, port, serviceName, initialDatabase, tlsMode, tlsCa, username, password } = body;
     // An absent password means "keep the stored one" — the façade handles that.
     const updated = await updateConnection(
       id,
-      { name, type, host, port, serviceName, username },
+      { name, type, host, port, serviceName, initialDatabase, tlsMode, tlsCa, username },
       password,
     );
     if (!updated) throw new AppError(404, 'Connection not found');
