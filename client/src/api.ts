@@ -292,7 +292,7 @@ export const api = {
   }) => invoke<{ models: string[] }>('ai:providers:models', body),
 
   // Ask AI history. Stored in ~/.downpick/chats.db, outside the vault — see SECURITY.md.
-  aiHistoryList: (body?: { limit?: number; before?: AiHistoryCursor | null }) =>
+  aiHistoryList: (body?: { limit?: number; before?: AiHistoryCursor | null; query?: string }) =>
     invoke<AiHistoryPage>('ai:history:list', body ?? {}),
   aiHistoryGet: (id: string) => invoke<AiConversationDetail>('ai:history:get', { id }),
   /**

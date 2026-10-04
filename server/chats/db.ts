@@ -119,6 +119,11 @@ function open(): DatabaseSync | null {
     // A garbage file opens without complaint — SQLite only reads the header when the first
     // statement runs, so this is where "not a database" actually surfaces.
     migrate(handle);
+    // Literal substring matching with Unicode case folding; SQLite LIKE only folds ASCII.
+    handle.function('search_contains', { deterministic: true }, (value, query) =>
+      typeof value === 'string' && typeof query === 'string' &&
+      value.normalize('NFC').toLowerCase().includes(query) ? 1 : 0,
+    );
     try {
       fs.chmodSync(dbPath, 0o600);
     } catch {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AiConversationSummary, AiHistoryCursor, api } from '../api';
 import { useStore } from '../store';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -66,6 +66,9 @@ export function AiHistoryList({
 }) {
   const { forgetAiConversation, forgetAllAiConversations } = useStore.getState();
 
+  const [query, setQuery] = useState('');
+  const requestVersion = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState<AiConversationSummary[]>([]);
   const [cursor, setCursor] = useState<AiHistoryCursor | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,9 +79,11 @@ export function AiHistoryList({
   const [confirmingClear, setConfirmingClear] = useState(false);
 
   const load = useCallback(async (before: AiHistoryCursor | null) => {
+    const version = ++requestVersion.current;
     setLoading(true);
     try {
-      const page = await api.aiHistoryList({ limit: PAGE_SIZE, before });
+      const page = await api.aiHistoryList({ limit: PAGE_SIZE, before, query });
+      if (version !== requestVersion.current) return;
       setAvailable(page.available);
       setError(null);
       setCursor(page.nextCursor);
@@ -90,15 +95,31 @@ export function AiHistoryList({
         return [...prev, ...page.items.filter((i) => !seen.has(i.id))];
       });
     } catch (err) {
+      if (version !== requestVersion.current) return;
       setError(err instanceof Error ? err.message : 'Could not load chat history.');
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
-    void load(null);
-  }, [load]);
+    const timer = window.setTimeout(() => void load(null), query.trim() ? 250 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      requestVersion.current++;
+    };
+  }, [load, query]);
+
+  const changeQuery = (value: string) => {
+    if (value === query) return;
+    requestVersion.current++;
+    setQuery(value);
+    setItems([]);
+    setCursor(null);
+    setError(null);
+    setLoading(true);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  };
 
   const onScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
@@ -130,6 +151,8 @@ export function AiHistoryList({
     setConfirmingClear(false);
     try {
       await api.aiHistoryClear();
+      requestVersion.current++;
+      setLoading(false);
       setItems([]);
       setCursor(null);
       forgetAllAiConversations();
@@ -152,7 +175,29 @@ export function AiHistoryList({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0" onScroll={onScroll}>
+      <div className="px-3 py-2 border-b border-surface-2 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <input
+            type="search"
+            aria-label="Search chat titles and content"
+            placeholder="Search titles and content…"
+            value={query}
+            onChange={(e) => changeQuery(e.target.value)}
+            className="w-full min-w-0 bg-surface-1 border border-surface-2 rounded px-2 py-1.5 text-xs text-text placeholder:text-text-dim focus:outline-none focus:border-accent"
+          />
+          {query && (
+            <button
+              className="text-[11px] text-text-muted hover:text-text flex-shrink-0"
+              onClick={() => changeQuery('')}
+              aria-label="Clear chat search"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div ref={listRef} className="flex-1 overflow-y-auto min-h-0" onScroll={onScroll} aria-busy={loading}>
         {error ? (
           <p className="text-[11.5px] text-error px-3 py-4 leading-relaxed m-0">{error}</p>
         ) : !available ? (
@@ -162,7 +207,9 @@ export function AiHistoryList({
           </p>
         ) : items.length === 0 && !loading ? (
           <p className="text-[11.5px] text-text-dim px-3 py-4 leading-relaxed m-0">
-            No past chats yet. Conversations are saved as you go.
+            {query.trim()
+              ? 'No chats match your search.'
+              : 'No past chats yet. Conversations are saved as you go.'}
           </p>
         ) : (
           items.map((item) => (

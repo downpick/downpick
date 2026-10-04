@@ -240,3 +240,54 @@ test('deriveTitle collapses, truncates, and falls back', () => {
   assert.equal(long.length, 120);
   assert.ok(long.endsWith('…'));
 });
+
+
+test('searches titles, later questions, assistant text and generated SQL', () => {
+  const title = save([answer('Only an answer')])!.id;
+  const question = save([ask('Initial question'), answer('OK'), ask('Find overdue invoices')])!.id;
+  const response = save([ask('Help'), answer('Inspect the overdue payments')])!.id;
+  const sql = save([ask('Query'), answer('Try this', 'SELECT * FROM overdue_accounts')])!.id;
+  save([ask('Unrelated'), answer('Nothing here')]);
+
+  assert.deepEqual(listConversations({ limit: 10, query: 'untitled chat' }).items.map(i => i.id), [title]);
+  assert.deepEqual(
+    listConversations({ limit: 10, query: '  OVERDUE  ' }).items.map(i => i.id).sort(),
+    [question, response, sql].sort(),
+  );
+  assert.equal(listConversations({ limit: 10, query: 'missing' }).items.length, 0);
+  assert.equal(listConversations({ limit: 10, query: '   ' }).items.length, 5);
+});
+
+test('search treats SQL wildcards and quotes literally and handles Unicode case', () => {
+  const literal = save([ask("Find 100% of user_id in C:\\temp's table")])!.id;
+  save([ask('Find 1000 of userXid')]);
+  const unicode = save([ask('AÇÃO e café')])!.id;
+
+  for (const query of ['100%', 'user_id', "\\temp's"]) {
+    assert.deepEqual(listConversations({ limit: 10, query }).items.map(i => i.id), [literal]);
+  }
+  for (const query of ['ação', 'CAFE\u0301']) {
+    assert.deepEqual(listConversations({ limit: 10, query }).items.map(i => i.id), [unicode]);
+  }
+  assert.equal(listConversations({ limit: 10, query: "' OR 1=1 --" }).items.length, 0);
+});
+
+test('search filters before pagination and returns each matching chat once', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'].map((n) =>
+    save([ask(n), answer('needle'), ask('needle again')])!.id,
+  );
+  for (let i = 0; i < 35; i++) save([ask(`Unrelated ${i}`)]);
+  withDb((handle) => handle.exec('UPDATE conversations SET updated_at = 1000'), undefined);
+
+  const seen: string[] = [];
+  let cursor = null as ReturnType<typeof listConversations>['nextCursor'];
+  for (let guard = 0; guard < 10; guard++) {
+    const page = listConversations({ limit: 2, before: cursor, query: 'needle' });
+    assert.equal(page.available, true);
+    seen.push(...page.items.map(i => i.id));
+    cursor = page.nextCursor;
+    if (!cursor) break;
+  }
+  assert.equal(cursor, null);
+  assert.deepEqual(seen, [...ids].sort().reverse());
+});

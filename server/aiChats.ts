@@ -43,14 +43,11 @@ const SUMMARY_COLUMNS = `
   (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
 `;
 
-const LIST_FIRST = `SELECT ${SUMMARY_COLUMNS} FROM conversations c
-  ORDER BY c.updated_at DESC, c.id DESC LIMIT ?`;
-
-// Two statements rather than one with an `IS NULL` guard: anonymous `?` binds positionally,
-// and mixing numbered parameters in to reuse a single string is a footgun for no gain.
-const LIST_AFTER = `SELECT ${SUMMARY_COLUMNS} FROM conversations c
-  WHERE c.updated_at < ? OR (c.updated_at = ? AND c.id < ?)
-  ORDER BY c.updated_at DESC, c.id DESC LIMIT ?`;
+// EXISTS keeps each conversation unique even when several messages match.
+const SEARCH_FILTER = `(search_contains(c.title, ?) OR EXISTS (
+  SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+    AND (search_contains(m.text, ?) OR search_contains(m.sql, ?))
+))`;
 
 const GET_CONVERSATION = `SELECT ${SUMMARY_COLUMNS} FROM conversations c WHERE c.id = ?`;
 
@@ -152,17 +149,28 @@ export function deriveTitle(messages: AiMessageInput[]): string {
 export function listConversations(opts: {
   limit: number;
   before?: AiHistoryCursor | null;
+  query?: string;
 }): AiHistoryPage {
   const { limit, before } = opts;
   return withDb<AiHistoryPage>(
     (handle) => {
       // One extra row is all it takes to know whether another page exists — cheaper than a
       // second COUNT over a table that only grows.
-      const rows = (
-        before
-          ? handle.prepare(LIST_AFTER).all(before.updatedAt, before.updatedAt, before.id, limit + 1)
-          : handle.prepare(LIST_FIRST).all(limit + 1)
-      ) as unknown as SummaryRow[];
+      const query = opts.query?.trim().normalize('NFC').toLowerCase();
+      const filters: string[] = [];
+      const params: (string | number)[] = [];
+      if (query) {
+        filters.push(SEARCH_FILTER);
+        params.push(query, query, query);
+      }
+      if (before) {
+        filters.push('(c.updated_at < ? OR (c.updated_at = ? AND c.id < ?))');
+        params.push(before.updatedAt, before.updatedAt, before.id);
+      }
+      const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+      const rows = handle.prepare(`SELECT ${SUMMARY_COLUMNS} FROM conversations c
+        ${where} ORDER BY c.updated_at DESC, c.id DESC LIMIT ?`
+      ).all(...params, limit + 1) as unknown as SummaryRow[];
 
       const hasMore = rows.length > limit;
       const items = rows.slice(0, limit).map(toSummary);

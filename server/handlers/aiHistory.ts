@@ -83,8 +83,12 @@ function requireId(value: unknown): string {
 }
 
 export function registerAiHistoryHandlers(): void {
-  registerHandler('ai:history:list', (body: { limit?: unknown; before?: unknown }) =>
-    listConversations({ limit: parseLimit(body?.limit), before: parseCursor(body?.before) }),
+  registerHandler('ai:history:list', (body: { limit?: unknown; before?: unknown; query?: unknown }) =>
+    listConversations({
+      limit: parseLimit(body?.limit),
+      before: parseCursor(body?.before),
+      query: typeof body?.query === 'string' ? body.query : undefined,
+    }),
   );
 
   registerHandler('ai:history:get', (body: { id?: unknown }) => {
