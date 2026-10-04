@@ -62,7 +62,7 @@ export interface SchemaNode {
 export interface TableNode {
   name: string;
   columns: ColumnNode[];
-  /** Present when the driver supports browsing indexes. */
+  /** Undefined until indexes have been requested for this table. */
   indexes?: IndexNode[];
 }
 
@@ -85,6 +85,7 @@ export interface Driver {
   getDatabases(): Promise<string[]>;
   executeQuery(sql: string, onCancel?: (cancel: () => void) => void): Promise<QueryResult>;
   getSchemaTree(): Promise<SchemaTree>;
+  getTableIndexes?(schema: string, table: string): Promise<IndexNode[]>;
   getRoutineDefinition?(id: string): Promise<string>;
   close(): Promise<void>;
   /**

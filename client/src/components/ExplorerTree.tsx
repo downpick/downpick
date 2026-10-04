@@ -83,6 +83,7 @@ interface Row {
   table?: string;
   column?: ColumnNode;
   index?: IndexNode;
+  loadIndexes?: () => void;
   routine?: RoutineNode;
 }
 
@@ -383,6 +384,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
       case 'table':
       case 'group':
         if (!row.chevron) return;
+        if (row.kind === 'table') row.loadIndexes?.();
         toggle(row.key, row.kind === 'schema' && DEFAULT_OPEN_SCHEMAS.has(row.label));
         return;
       case 'column':
@@ -395,6 +397,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
   function handleChevronClick(e: React.MouseEvent, row: Row) {
     if (!row.chevron) return;
     e.stopPropagation();
+    if (row.kind === 'table') row.loadIndexes?.();
     if (row.kind === 'connection') {
       if (activeConnections[row.conn.id]) toggle(row.conn.id, true);
       else void handleConnect(row.conn);
@@ -570,6 +573,10 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                       !table.indexes?.some((index) => hit(index.name))) continue;
                   const tKey = rowKey(conn.id, database, schemaNode.name, table.name);
                   const tOpen = isOpen(tKey, false);
+                  const grouped = conn.type === 'postgres' || conn.type === 'sqlserver';
+                  const loadIndexes = () => void useStore.getState().loadTableIndexes(
+                    conn.id, database, schemaNode.name, table.name,
+                  );
                   tableRows.push({
                     key: tKey,
                     kind: 'table',
@@ -583,9 +590,13 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                     database,
                     schema: schemaNode.name,
                     table: table.name,
+                    busy: table.indexesLoading,
+                    error: table.indexesError,
+                    onRetry: loadIndexes,
+                    loadIndexes: grouped && table.indexes === undefined && !table.indexesLoading && !table.indexesError
+                      ? loadIndexes : undefined,
                   });
                   if (!tOpen) continue;
-                  const grouped = table.indexes !== undefined;
                   const columnsKey = rowKey(tKey, 'columns');
                   const indexesKey = rowKey(tKey, 'indexes');
                   const columnsOpen = isOpen(columnsKey, false);
@@ -625,7 +636,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                     });
                   }
                   if (grouped) {
-                    const indexes = table.indexes!;
+                    const indexes = table.indexes ?? [];
                     tableRows.push({
                       key: indexesKey,
                       kind: 'group',
@@ -633,8 +644,8 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                       label: 'Indexes',
                       icon: 'schema-folder',
                       chevron: indexes.length ? (indexesOpen ? 'down' : 'right') : null,
-                      meta: String(indexes.length),
-                      title: indexes.length ? 'Indexes' : 'No indexes',
+                      meta: table.indexes === undefined ? (table.indexesLoading ? '…' : '—') : String(indexes.length),
+                      title: table.indexes === undefined ? 'Indexes have not been loaded' : indexes.length ? 'Indexes' : 'No indexes',
                       labelClass: 'text-text-muted',
                       conn,
                     });
@@ -776,6 +787,15 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
     selectedKey,
     showRoutines,
   ]);
+
+  // Reload expanded tables after a schema refresh, but never fetch every table just
+  // because search temporarily unfolds the tree.
+  useEffect(() => {
+    if (search.trim()) return;
+    for (const row of rows) {
+      if (row.kind === 'table' && expanded[row.key]) row.loadIndexes?.();
+    }
+  }, [rows, expanded, search]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">

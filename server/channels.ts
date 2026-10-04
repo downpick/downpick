@@ -28,6 +28,7 @@ export const CHANNELS = [
   'query:cancel',
 
   'schema:get',
+  'schema:tableIndexes',
   'schema:routineDefinition',
 
   'settings:get',

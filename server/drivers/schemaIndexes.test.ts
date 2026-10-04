@@ -6,7 +6,7 @@ import { SqlServerDriver } from './sqlserver';
 // Exercise the complete schema traversal with repeated table names across schemas,
 // an unindexed table, and identifiers that must be bound instead of interpolated.
 for (const dialect of ['postgres', 'sqlserver'] as const) {
-  test(`${dialect} attaches indexes to their own schema/table and retains columns`, async () => {
+  test(`${dialect} loads indexes only on demand and retains columns for autocomplete`, async () => {
     const schemas = ['public', "tenant's schema"];
     const calls: unknown[][] = [];
     const catalog = (query: string, params: unknown[] = []): Record<string, unknown>[] => {
@@ -63,17 +63,19 @@ for (const dialect of ['postgres', 'sqlserver'] as const) {
         });
 
     const tree = await driver.getSchemaTree();
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 0, "Opening a database must not query indexes or scripts");
     assert.equal(tree.databases[0].name, 'app');
     for (const schema of tree.databases[0].schemas) {
       assert.deepEqual(schema.tables[0].columns, [{ name: 'id', type: 'integer', nullable: false }]);
-      assert.deepEqual(schema.tables[0].indexes, [
+      assert.equal(schema.tables[0].indexes, undefined);
+      assert.deepEqual(await driver.getTableIndexes(schema.name, schema.tables[0].name), [
         { name: `${schema.name}_pk`, type: 'BTREE', unique: true, primary: true,
           creationScript: dialect === 'postgres' ? 'CREATE UNIQUE INDEX "pk" ON "public"."orders" USING btree (id);' : undefined },
         { name: 'lookup', type: 'HASH', unique: false, primary: false, creationScript: undefined },
         { name: 'unique_lookup', type: 'BTREE', unique: true, primary: false, creationScript: undefined },
       ]);
-      assert.deepEqual(schema.tables[1].indexes, []);
+      assert.equal(schema.tables[1].indexes, undefined);
+      assert.deepEqual(await driver.getTableIndexes(schema.name, schema.tables[1].name), []);
     }
   });
 }

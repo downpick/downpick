@@ -220,6 +220,8 @@ export const api = {
 
   schema: (connectionId: string, database: string) =>
     invoke<import('./store').SchemaTree>('schema:get', { connectionId, database }),
+  tableIndexes: (connectionId: string, database: string, schema: string, table: string) =>
+    invoke<import('./store').IndexNode[]>('schema:tableIndexes', { connectionId, database, schema, table }),
 
   // Vault. `vaultFilePath` is only passed by the first-run screen, where the user picks which
   // vault to create or open; everywhere else the configured path is already the right one.

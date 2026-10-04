@@ -35,8 +35,10 @@ export interface ColumnNode {
 export interface TableNode {
   name: string;
   columns: ColumnNode[];
-  /** Present when the driver supports browsing indexes. */
+  /** Undefined until indexes have been requested for this table. */
   indexes?: IndexNode[];
+  indexesLoading?: boolean;
+  indexesError?: string;
 }
 
 export interface IndexNode {
@@ -274,6 +276,7 @@ interface AppState {
   // Combined action: store schema for a database AND open a new tab — one render cycle
   openDatabaseAndTab: (connId: string, connName: string, database: string, schema: SchemaTree) => void;
   setDatabaseSchema: (connId: string, database: string, schema: SchemaTree) => void;
+  loadTableIndexes: (connId: string, database: string, schema: string, table: string) => Promise<void>;
   setDatabaseSchemaLoading: (connId: string, database: string, loading: boolean) => void;
   setDatabaseSchemaError: (connId: string, database: string, error: string | null) => void;
 
@@ -479,6 +482,39 @@ export const useStore = create<AppState>((set, get) => ({
       tabs: [...s.tabs, tab],
       activeTabId: id,
     }));
+  },
+
+  loadTableIndexes: async (connId, database, schemaName, tableName) => {
+    const db = get().activeConnections[connId]?.schemas[database];
+    const table = db?.schema?.databases[0]?.schemas.find((s) => s.name === schemaName)
+      ?.tables.find((t) => t.name === tableName);
+    if (!table || table.indexes !== undefined || table.indexesLoading) return;
+    const pending = { ...table, indexesLoading: true, indexesError: undefined };
+    // Only replace the exact table that started the request. Refresh/disconnect can
+    // invalidate it while the catalog query is in flight; late results are discarded.
+    const replace = (expected: TableNode, replacement: TableNode) => set((s) => {
+      const connection = s.activeConnections[connId];
+      const current = connection?.schemas[database];
+      if (!current?.schema || !current.schema.databases.some((d) =>
+        d.schemas.some((sc) => sc.tables.includes(expected)))) return s;
+      return { activeConnections: { ...s.activeConnections, [connId]: {
+        ...connection, schemas: { ...connection.schemas, [database]: {
+          ...current, schema: { ...current.schema, databases: current.schema.databases.map((d) => ({
+            ...d, schemas: d.schemas.map((sc) => ({
+              ...sc, tables: sc.tables.map((t) => t === expected ? replacement : t),
+            })),
+          })) },
+        } },
+      } } };
+    });
+    replace(table, pending);
+    try {
+      const indexes = await api.tableIndexes(connId, database, schemaName, tableName);
+      replace(pending, { ...table, indexes, indexesLoading: false, indexesError: undefined });
+    } catch (error) {
+      replace(pending, { ...table, indexesLoading: false,
+        indexesError: error instanceof Error ? error.message : 'Failed to load indexes' });
+    }
   },
 
   setDatabaseSchema: (connId, database, schema) =>

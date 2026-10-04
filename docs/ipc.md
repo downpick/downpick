@@ -26,6 +26,7 @@ stored password or API key.
 | `query:run` | Execute a query (SQL, or MongoDB shell-style syntax); results capped at 10,000 rows |
 | `query:cancel` | Cancel an in-flight query by its queryId |
 | `schema:get` | Fetch the schema tree for an open database |
+| `schema:tableIndexes` | Fetch indexes and creation scripts for one table on demand |
 | `settings:get` | Get current settings + vault file validation |
 | `settings:update` | Update settings (vault file path, query timeout, auto-lock, notifications) |
 | `settings:validate` | Validate a candidate vault file path |

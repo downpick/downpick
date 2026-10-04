@@ -2,6 +2,18 @@ import { AppError, registerHandler } from '../dispatch';
 import { activeConnections } from './connections';
 
 export function registerSchemaHandlers(): void {
+  registerHandler('schema:tableIndexes', async (
+    { connectionId, database, schema, table }: { connectionId: string; database: string; schema: string; table: string },
+  ) => {
+    if (typeof schema !== 'string' || !schema || typeof table !== 'string' || !table) {
+      throw new AppError(400, 'Invalid schema or table');
+    }
+    const driver = activeConnections.get(`${connectionId}::${database}`);
+    if (!driver) throw new AppError(404, 'No active connection for this database');
+    if (!driver.getTableIndexes) throw new AppError(400, 'Indexes are not supported for this database');
+    return driver.getTableIndexes(schema, table);
+  });
+
   registerHandler('schema:routineDefinition', async (
     { connectionId, database, routineId }: { connectionId: string; database: string; routineId: string },
   ) => {
