@@ -147,25 +147,32 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const showRoutines = useStore((s) => s.showRoutines);
   const [search, setSearch] = useState('');
+  const [searchExpanded, setSearchExpanded] = useState<Record<string, boolean>>({});
   const [showSearch, setShowSearch] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  function updateSearch(value: string) {
+    setSearch(value);
+    setSearchExpanded({});
+  }
+
   function toggleSearch() {
     setShowSearch((open) => {
       const next = !open;
-      if (!next) setSearch('');
+      if (!next) updateSearch('');
       else requestAnimationFrame(() => searchInputRef.current?.focus());
       return next;
     });
   }
 
-  function toggle(key: string, dflt: boolean) {
-    setExpanded((e) => ({ ...e, [key]: !(e[key] ?? dflt) }));
+  function toggle(row: Row) {
+    setOpen(row.key, row.chevron !== 'down');
   }
 
   function setOpen(key: string, open: boolean) {
-    setExpanded((e) => ({ ...e, [key]: open }));
+    const setExpansion = search.trim() ? setSearchExpanded : setExpanded;
+    setExpansion((e) => ({ ...e, [key]: open }));
   }
 
   // ---- actions -------------------------------------------------------------
@@ -371,7 +378,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
       case 'connection': {
         if (connectingConnections[row.conn.id]) return;
         if (!activeConnections[row.conn.id]) void handleConnect(row.conn);
-        else toggle(row.conn.id, true);
+        else toggle(row);
         return;
       }
       // Clicking a database is how you start working in it: it opens (or focuses) that
@@ -384,8 +391,8 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
       case 'table':
       case 'group':
         if (!row.chevron) return;
-        if (row.kind === 'table') row.loadIndexes?.();
-        toggle(row.key, row.kind === 'schema' && DEFAULT_OPEN_SCHEMAS.has(row.label));
+        if (row.kind === 'table' && row.chevron === 'right') row.loadIndexes?.();
+        toggle(row);
         return;
       case 'column':
       case 'routine':
@@ -397,20 +404,20 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
   function handleChevronClick(e: React.MouseEvent, row: Row) {
     if (!row.chevron) return;
     e.stopPropagation();
-    if (row.kind === 'table') row.loadIndexes?.();
+    if (row.kind === 'table' && row.chevron === 'right') row.loadIndexes?.();
     if (row.kind === 'connection') {
-      if (activeConnections[row.conn.id]) toggle(row.conn.id, true);
+      if (activeConnections[row.conn.id]) toggle(row);
       else void handleConnect(row.conn);
       return;
     }
     // Browsing a database's tables without committing to a query tab.
     if (row.kind === 'database') {
       const loaded = !!activeConnections[row.conn.id]?.schemas[row.database!]?.schema;
-      if (loaded) toggle(row.key, false);
+      if (loaded) toggle(row);
       else void ensureSchema(row.conn, row.database!, false);
       return;
     }
-    toggle(row.key, row.kind === 'schema' && DEFAULT_OPEN_SCHEMAS.has(row.label));
+    toggle(row);
   }
 
   function menuItemsFor(row: Row): MenuItemSpec[] {
@@ -532,9 +539,10 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const hit = (s: string) => !q || s.toLowerCase().includes(q);
-    // A search flattens the folding open: a match five levels down is useless if the branch
-    // above it is still folded.
-    const isOpen = (key: string, dflt: boolean) => (q ? true : (expanded[key] ?? dflt));
+    // Search has its own folding state: reveal matching descendants by default, but
+    // let the user collapse any branch without changing the unfiltered tree.
+    const isOpen = (key: string, dflt: boolean, searchDefault = true) =>
+      q ? (searchExpanded[key] ?? searchDefault) : (expanded[key] ?? dflt);
 
     const out: Row[] = [];
     const sorted = [...savedConnections].sort((a, b) =>
@@ -550,7 +558,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
       // Children are collected before the connection row is emitted, so a search that
       // matches nothing inside a connection can drop the whole branch.
       const children: Row[] = [];
-      if (active && connOpen) {
+      if (active && (q || connOpen)) {
         for (const database of active.databases ?? []) {
           const dbKey = rowKey(conn.id, database);
           const dbSchema = active.schemas[database];
@@ -558,7 +566,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
           const dbMatch = connMatch || hit(database);
           const dbChildren: Row[] = [];
 
-          if (dbOpen && dbSchema?.schema) {
+          if ((q || dbOpen) && dbSchema?.schema) {
             // The server returns the opened database as the single entry in `databases`.
             for (const schemaNode of dbSchema.schema.databases[0]?.schemas ?? []) {
               const scKey = rowKey(conn.id, database, schemaNode.name);
@@ -566,13 +574,13 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
               const scMatch = dbMatch || hit(schemaNode.name);
               const tableRows: Row[] = [];
 
-              if (scOpen) {
+              if (q || scOpen) {
                 for (const table of schemaNode.tables) {
                   const tableMatch = scMatch || hit(table.name);
                   if (q && !tableMatch && !table.columns.some((col) => hit(col.name)) &&
                       !table.indexes?.some((index) => hit(index.name))) continue;
                   const tKey = rowKey(conn.id, database, schemaNode.name, table.name);
-                  const tOpen = isOpen(tKey, false);
+                  const tOpen = isOpen(tKey, false, !tableMatch);
                   const grouped = conn.type === 'postgres' || conn.type === 'sqlserver';
                   const loadIndexes = () => void useStore.getState().loadTableIndexes(
                     conn.id, database, schemaNode.name, table.name,
@@ -599,8 +607,8 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                   if (!tOpen) continue;
                   const columnsKey = rowKey(tKey, 'columns');
                   const indexesKey = rowKey(tKey, 'indexes');
-                  const columnsOpen = isOpen(columnsKey, false);
-                  const indexesOpen = isOpen(indexesKey, false);
+                  const columnsOpen = isOpen(columnsKey, false, !tableMatch && table.columns.some((col) => hit(col.name)));
+                  const indexesOpen = isOpen(indexesKey, false, !tableMatch && !!table.indexes?.some((index) => hit(index.name)));
                   if (grouped) {
                     tableRows.push({
                       key: columnsKey,
@@ -672,7 +680,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                 }
               }
 
-              if (scOpen && showRoutines && (conn.type === 'postgres' || conn.type === 'sqlserver')) {
+              if ((q || scOpen) && showRoutines && (conn.type === 'postgres' || conn.type === 'sqlserver')) {
                 for (const kind of ['function', 'procedure'] as const) {
                   const label = kind === 'function' ? 'Functions' : 'Procedures';
                   const routines = (schemaNode.routines ?? []).filter((routine) => routine.kind === kind);
@@ -681,7 +689,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                   if (q && !scMatch && !hit(label) && matching.length === 0) continue;
                   // Empty segment keeps group keys distinct from table identifiers.
                   const groupKey = rowKey(scKey, '', kind);
-                  const groupOpen = isOpen(groupKey, false);
+                  const groupOpen = isOpen(groupKey, false, !scMatch && !hit(label));
                   tableRows.push({
                     key: groupKey, kind: 'group', depth: 3, label,
                     icon: 'schema-folder',
@@ -716,7 +724,9 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
                 database,
                 schema: schemaNode.name,
               });
-              dbChildren.push(...tableRows);
+              // Matching is evaluated even for folded branches, so collapsing an
+              // ancestor of a result keeps that ancestor visible.
+              if (scOpen) dbChildren.push(...tableRows);
             }
           }
 
@@ -739,7 +749,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
             conn,
             database,
           });
-          children.push(...dbChildren);
+          if (dbOpen) children.push(...dbChildren);
         }
       }
 
@@ -772,7 +782,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
         onRetry: () => void handleConnect(conn),
         conn,
       });
-      out.push(...children);
+      if (connOpen) out.push(...children);
     }
     return out;
     // The retry callbacks baked into the rows (handleConnect, refreshSchema) are recreated
@@ -783,6 +793,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
     connectingConnections,
     connectErrors,
     expanded,
+    searchExpanded,
     search,
     selectedKey,
     showRoutines,
@@ -832,7 +843,7 @@ export const ExplorerTree = React.memo(function ExplorerTree() {
             className="input text-xs py-1.5"
             placeholder="Search connections, tables, columns, indexes, routines…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => updateSearch(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') toggleSearch();
             }}
