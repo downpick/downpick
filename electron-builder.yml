@@ -38,6 +38,8 @@ afterPack: scripts/adhoc-sign-mac.js
 
 mac:
   category: public.app-category.developer-tools
+  extendInfo:
+    NSLocalNetworkUsageDescription: Downpick needs access to your local network to connect to the database servers you configure.
   target:
     - target: dmg
       arch: [arm64, x64]

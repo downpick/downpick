@@ -117,3 +117,25 @@ test('nested certificate failures explain trust configuration', () => {
   const message = describeConnectionError({ code: 'ESOCKET', originalError: { code: 'SELF_SIGNED_CERT_IN_CHAIN', message: 'self-signed certificate in certificate chain' } }, { type: 'sqlserver', host: 'db', port: 1433 });
   assert.match(message, /TLS certificate verification failed/);
 });
+
+test('unreachable PostgreSQL and nested SQL Server errors include macOS permission guidance', () => {
+  for (const type of ['postgres', 'sqlserver'] as const) {
+    const cause = { code: 'EHOSTUNREACH', message: 'connect EHOSTUNREACH 10.10.20.70' };
+    const err = type === 'postgres' ? cause : {
+      code: 'ESOCKET', message: 'Failed to connect - Could not connect (sequence)',
+      originalError: { errors: [cause] },
+    };
+    const message = describeConnectionError(err, {
+      type, host: '10.10.20.70', port: type === 'postgres' ? 5432 : 1433,
+    });
+    assert.match(message, /network, VPN, and firewall/);
+    assert.doesNotMatch(message, /Authentication failed|Enable TLS/);
+    if (process.platform === 'darwin') {
+      assert.match(message, /may also be blocking local network access/);
+      assert.match(message, /Privacy & Security > Local Network/);
+      assert.match(message, /If Downpick is missing/);
+    } else {
+      assert.doesNotMatch(message, /macOS|System Settings/);
+    }
+  }
+});

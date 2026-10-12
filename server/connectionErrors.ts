@@ -127,8 +127,11 @@ export function describeConnectionError(err: unknown, ctx: ConnectionErrorContex
     );
   }
   if (has('EHOSTUNREACH', 'ENETUNREACH') || lower.includes('ehostunreach') || lower.includes('enetunreach')) {
+    const permissionHint = process.platform === 'darwin'
+      ? ' macOS may also be blocking local network access. Check System Settings > Privacy & Security > Local Network for Downpick, then quit and reopen the app after allowing access. If Downpick is missing, report your macOS and app versions; the app package or its code signature may need updating.'
+      : '';
     return withDetail(
-      `No network route to ${target}. Check that you are on the right network or VPN.`,
+      `Could not reach ${target}. Check the network, VPN, and firewall rules.${permissionHint}`,
     );
   }
   if (has('ETIMEDOUT', 'ETIMEOUT', 'ESOCKETTIMEDOUT') || lower.includes('server selection timed out')) {
