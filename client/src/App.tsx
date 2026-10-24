@@ -387,6 +387,16 @@ export default function App() {
                 {tab.isRunning && (
                   <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
                 )}
+                {!tab.isRunning && tab.error && (
+                  <span
+                    className="flex flex-shrink-0 text-error"
+                    role="img"
+                    aria-label="Last query failed"
+                    title={`Last query failed: ${tab.error}`}
+                  >
+                    <Icon name="alert-circle" size={14} aria-hidden="true" />
+                  </span>
+                )}
                 <button
                   className="ml-1 text-text-dim hover:text-error leading-none"
                   onClick={(e) => {

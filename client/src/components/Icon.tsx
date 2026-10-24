@@ -27,6 +27,7 @@ export type IconName =
   | 'search'
   | 'dots-vertical'
   | 'refresh'
+  | 'alert-circle'
   | 'circle-filled'
   | 'brand-mongodb';
 
@@ -75,6 +76,9 @@ const PATHS: Record<IconName, ReactElement> = {
   ),
   'refresh': (
     <><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></>
+  ),
+  'alert-circle': (
+    <><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" /></>
   ),
   'circle-filled': (
     <><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" fill="currentColor" stroke="none" /></>
